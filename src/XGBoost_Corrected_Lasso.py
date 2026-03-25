@@ -23,6 +23,8 @@ class XGBoostCorrectedLasso:
         XGBoost的最大深度
     learning_rate : float
         XGBoost的学习率
+    importance_type : str
+        特征重要性类型: 'gain', 'weight', 'cover'
     gamma : float
         权重指数
     max_iter : int
@@ -31,13 +33,14 @@ class XGBoostCorrectedLasso:
         收敛阈值
     """
 
-    def __init__(self, alpha=1.0, Sigma_uu=None, n_estimators=100, max_depth=6, 
-                 learning_rate=0.1, gamma=1.0, max_iter=10000, tol=1e-6):
+    def __init__(self, alpha=1.0, Sigma_uu=None, n_estimators=100, max_depth=10, 
+                 learning_rate=0.1, importance_type='gain', gamma=1.0, max_iter=10000, tol=1e-6):
         self.alpha = alpha
         self.Sigma_uu = Sigma_uu
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.learning_rate = learning_rate
+        self.importance_type = importance_type
         self.gamma = gamma
         self.max_iter = max_iter
         self.tol = tol
@@ -78,8 +81,9 @@ class XGBoostCorrectedLasso:
             n_estimators=self.n_estimators,
             max_depth=self.max_depth,
             learning_rate=self.learning_rate,
+            importance_type=self.importance_type,
             random_state=42,
-            n_jobs=-1,
+            n_jobs=1,
             verbosity=0
         )
         xgb_model.fit(W_scaled, y_centered)
@@ -89,8 +93,11 @@ class XGBoostCorrectedLasso:
 
         # 基于特征重要性计算权重
         # 特征越重要，权重越小（惩罚越小）
-        max_importance = np.max(feature_importances) if np.max(feature_importances) > 0 else 1.0
-        weights = 1.0 / (feature_importances / max_importance + 1e-8) ** self.gamma
+        # 使用更稳定的权重计算方式
+        fi_normalized = feature_importances / (np.sum(feature_importances) + 1e-10)
+        fi_normalized = np.clip(fi_normalized, 1e-10, 1.0)
+        weights = 1.0 / (fi_normalized + 1e-8) ** self.gamma
+        weights = np.clip(weights, 1e-3, 1e6)
         self.weights_ = weights.copy()
 
         W_weighted = W_scaled / weights[np.newaxis, :]

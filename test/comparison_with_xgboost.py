@@ -1,4 +1,6 @@
 import numpy as np
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import sys
 import os
@@ -73,7 +75,7 @@ def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5
         'CoCoLasso': CoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu),
         'Adaptive Corrected Lasso': AdaptiveCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu),
         'Adaptive CoCoLasso': AdaptiveCoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu),
-        'XGBoost Corrected Lasso': XGBoostCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu, n_estimators=50, max_depth=4, learning_rate=0.1)
+        'XGBoost Corrected Lasso': XGBoostCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu, n_estimators=50, max_depth=5, learning_rate=0.1, importance_type='gain')
     }
     
     all_results = {name: {
@@ -91,7 +93,7 @@ def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5
         models['CoCoLasso'] = CoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu)
         models['Adaptive Corrected Lasso'] = AdaptiveCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu)
         models['Adaptive CoCoLasso'] = AdaptiveCoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu)
-        models['XGBoost Corrected Lasso'] = XGBoostCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu, n_estimators=50, max_depth=4, learning_rate=0.1)
+        models['XGBoost Corrected Lasso'] = XGBoostCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu, n_estimators=50, max_depth=5, learning_rate=0.1, importance_type='gain')
         
         for name, model in models.items():
             result = evaluate_model_once(model, W, y, true_indices, beta_true, p)
@@ -218,39 +220,6 @@ def plot_comparison(x_values, results, xlabel, title, save_path):
     plt.close()
 
 
-def plot_radar_chart(results, save_path):
-    model_names = ['Naive Lasso', 'Corrected Lasso', 'CoCoLasso', 
-                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso',
-                   'XGBoost Corrected Lasso']
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#e377c2']
-    
-    metrics = ['precision', 'recall', 'f1', 'specificity', 'accuracy']
-    metric_names = ['Precision', 'Recall', 'F1 Score', 'Specificity', 'Accuracy']
-    
-    angles = np.linspace(0, 2*np.pi, len(metrics), endpoint=False).tolist()
-    angles += angles[:1]
-    
-    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw=dict(polar=True))
-    
-    for i, name in enumerate(model_names):
-        values = [results[name].get(m, 0) for m in metrics]
-        values += values[:1]
-        ax.plot(angles, values, 'o-', linewidth=2, label=name, color=colors[i])
-        ax.fill(angles, values, alpha=0.1, color=colors[i])
-    
-    ax.set_xticks(angles[:-1])
-    ax.set_xticklabels(metric_names, fontsize=12)
-    ax.set_ylim(0, 1)
-    ax.set_title('Model Performance Comparison (with XGBoost)', fontsize=16, fontweight='bold')
-    ax.legend(loc='upper right', bbox_to_anchor=(0.1, 0.1), fontsize=10)
-    ax.grid(True)
-    
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    print(f"雷达图已保存到: {save_path}")
-    plt.close()
-
-
 def main():
     print("="*80)
     print("高维测量误差变量选择工具包 - 综合对比测试（含XGBoost）")
@@ -261,11 +230,11 @@ def main():
         os.makedirs(save_dir)
     
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    n_simulations = 10
+    n_simulations = 100
     
     print(f"\n模拟次数: {n_simulations}")
     
-    alphas = np.logspace(-2, -0.5, 4)
+    alphas = np.logspace(-2, -0.5, 20)
     fixed = {'n': 80, 'p': 100, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_alpha = run_parameter_test(
         "正则化强度变化", "alpha", alphas, fixed, n_simulations
@@ -273,7 +242,7 @@ def main():
     plot_comparison(x_vals, res_alpha, 'Regularization Parameter (alpha)', 
                  'Regularization', os.path.join(save_dir, f'alpha_comparison_xgb_{timestamp}.png'))
     
-    p_values = [80, 120, 160]
+    p_values = np.linspace(50, 300, 20, dtype=int)
     fixed = {'n': 80, 'alpha': 0.1, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_p = run_parameter_test(
         "变量个数变化", "p", p_values, fixed, n_simulations
@@ -281,7 +250,7 @@ def main():
     plot_comparison(x_vals, res_p, 'Number of Features (p)', 
                  'Number of Features', os.path.join(save_dir, f'p_comparison_xgb_{timestamp}.png'))
     
-    n_values = [60, 100, 140]
+    n_values = np.linspace(40, 200, 20, dtype=int)
     fixed = {'p': 100, 'alpha': 0.1, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_n = run_parameter_test(
         "样本量变化", "n", n_values, fixed, n_simulations
@@ -289,7 +258,7 @@ def main():
     plot_comparison(x_vals, res_n, 'Number of Samples (n)', 
                  'Number of Samples', os.path.join(save_dir, f'n_comparison_xgb_{timestamp}.png'))
     
-    sigma_u_values = [0.2, 0.4, 0.6]
+    sigma_u_values = np.linspace(0.1, 1.0, 20)
     fixed = {'n': 80, 'p': 100, 's': 5, 'alpha': 0.1, 'sigma': 1.0}
     x_vals, res_sigma_u = run_parameter_test(
         "测量误差强度变化", "sigma_u", sigma_u_values, fixed, n_simulations
@@ -297,16 +266,10 @@ def main():
     plot_comparison(x_vals, res_sigma_u, 'Measurement Error Std (sigma_u)', 
                  'Measurement Error', os.path.join(save_dir, f'sigma_u_comparison_xgb_{timestamp}.png'))
     
-    print("\n" + "="*80)
-    print("生成综合性能雷达图")
-    print("="*80)
-    
     default_results = monte_carlo_evaluation(
         n_simulations=n_simulations,
         n=80, p=100, s=5, alpha=0.1, sigma=1.0, sigma_u=0.5
     )
-    
-    plot_radar_chart(default_results, os.path.join(save_dir, f'radar_comparison_xgb_{timestamp}.png'))
     
     all_results = {
         'alpha': {'x': alphas, 'results': res_alpha},

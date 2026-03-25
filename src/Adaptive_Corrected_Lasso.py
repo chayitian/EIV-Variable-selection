@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Lasso
-from .Corrected_Lasso import CorrectedLasso
+from .Corrected_OLS import CorrectedOLS
 
 
 class AdaptiveCorrectedLasso:
@@ -62,9 +62,9 @@ class AdaptiveCorrectedLasso:
         W_std = scaler_W.scale_
         Sigma_uu_scaled = self.Sigma_uu / np.outer(W_std, W_std)
 
-        cl = CorrectedLasso(alpha=self.alpha / 10, Sigma_uu=self.Sigma_uu, max_iter=self.max_iter, tol=self.tol)
-        cl.fit(W, y)
-        self.beta_init_ = cl.coef_.copy()
+        co = CorrectedOLS(Sigma_uu=self.Sigma_uu)
+        co.fit(W, y)
+        self.beta_init_ = co.coef_.copy()
 
         beta_init_scaled = self.beta_init_ * W_std
         weights = 1.0 / (np.abs(beta_init_scaled) + 1e-6) ** self.gamma

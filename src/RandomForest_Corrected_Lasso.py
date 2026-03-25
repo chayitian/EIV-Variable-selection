@@ -84,8 +84,11 @@ class RandomForestCorrectedLasso:
 
         # 基于特征重要性计算权重
         # 特征越重要，权重越小（惩罚越小）
-        max_importance = np.max(feature_importances) if np.max(feature_importances) > 0 else 1.0
-        weights = 1.0 / (feature_importances / max_importance + 1e-8) ** self.gamma
+        # 使用更稳定的权重计算方式（与XGBoost一致）
+        fi_normalized = feature_importances / (np.sum(feature_importances) + 1e-10)
+        fi_normalized = np.clip(fi_normalized, 1e-10, 1.0)
+        weights = 1.0 / (fi_normalized + 1e-8) ** self.gamma
+        weights = np.clip(weights, 1e-3, 1e6)
         self.weights_ = weights.copy()
 
         W_weighted = W_scaled / weights[np.newaxis, :]
