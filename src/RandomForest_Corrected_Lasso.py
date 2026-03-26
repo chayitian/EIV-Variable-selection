@@ -23,6 +23,8 @@ class RandomForestCorrectedLasso:
         随机森林的最大深度
     gamma : float
         权重指数
+    weight_method : str
+        权重计算方法: 'normalized'（默认，归一化后计算）或 'max_scaled'（最大值缩放后计算）
     max_iter : int
         最大迭代次数
     tol : float
@@ -30,12 +32,13 @@ class RandomForestCorrectedLasso:
     """
 
     def __init__(self, alpha=1.0, Sigma_uu=None, n_estimators=100, max_depth=10, 
-                 gamma=1.0, max_iter=10000, tol=1e-6):
+                 gamma=1.0, weight_method='normalized', max_iter=10000, tol=1e-6):
         self.alpha = alpha
         self.Sigma_uu = Sigma_uu
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.gamma = gamma
+        self.weight_method = weight_method
         self.max_iter = max_iter
         self.tol = tol
 
@@ -84,11 +87,18 @@ class RandomForestCorrectedLasso:
 
         # 基于特征重要性计算权重
         # 特征越重要，权重越小（惩罚越小）
-        # 使用更稳定的权重计算方式（与XGBoost一致）
-        fi_normalized = feature_importances / (np.sum(feature_importances) + 1e-10)
-        fi_normalized = np.clip(fi_normalized, 1e-10, 1.0)
-        weights = 1.0 / (fi_normalized + 1e-8) ** self.gamma
-        weights = np.clip(weights, 1e-3, 1e6)
+        if self.weight_method == 'normalized':
+            # 方法1：归一化后计算（默认，更稳定）
+            fi_normalized = feature_importances / (np.sum(feature_importances) + 1e-10)
+            fi_normalized = np.clip(fi_normalized, 1e-10, 1.0)
+            weights = 1.0 / (fi_normalized + 1e-8) ** self.gamma
+            weights = np.clip(weights, 1e-3, 1e6)
+        elif self.weight_method == 'max_scaled':
+            # 方法2：最大值缩放后计算（备选）
+            max_importance = np.max(feature_importances) if np.max(feature_importances) > 0 else 1.0
+            weights = 1.0 / (feature_importances / max_importance + 1e-8) ** self.gamma
+        else:
+            raise ValueError(f"未知的权重计算方法: {self.weight_method}，请使用 'normalized' 或 'max_scaled'")
         self.weights_ = weights.copy()
 
         W_weighted = W_scaled / weights[np.newaxis, :]

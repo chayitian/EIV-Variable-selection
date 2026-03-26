@@ -16,11 +16,11 @@ from src.Corrected_Lasso import CorrectedLasso
 from src.CoCoLasso import CoCoLasso
 from src.Adaptive_Corrected_Lasso import AdaptiveCorrectedLasso
 from src.Adaptive_CoCoLasso import AdaptiveCoCoLasso
-from src.RandomForest_Corrected_Lasso import RandomForestCorrectedLasso
 from src.vs_evaluate import selection_accuracy
 
 
 def generate_data(n=100, p=200, s=5, sigma=1.0, sigma_u=0.5, seed=None):
+    """生成带测量误差的高维线性回归数据"""
     if seed is not None:
         np.random.seed(seed)
 
@@ -40,6 +40,7 @@ def generate_data(n=100, p=200, s=5, sigma=1.0, sigma_u=0.5, seed=None):
 
 
 def evaluate_model_once(model, W, y, true_indices, beta_true, p):
+    """评估单个模型一次"""
     try:
         model.fit(W, y)
         selected_indices = list(np.where(np.abs(model.coef_) > 1e-6)[0])
@@ -61,9 +62,9 @@ def evaluate_model_once(model, W, y, true_indices, beta_true, p):
 
 
 def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5):
+    """蒙特卡洛评估 - 多次模拟取平均"""
     model_names = ['Naive Lasso', 'Corrected Lasso', 'CoCoLasso', 
-                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso',
-                   'RandomForest Corrected Lasso']
+                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso']
     
     W, y, true_indices, beta_true, Sigma_uu = generate_data(
         n=n, p=p, s=s, sigma=sigma, sigma_u=sigma_u, seed=0
@@ -74,8 +75,7 @@ def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5
         'Corrected Lasso': CorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu),
         'CoCoLasso': CoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu),
         'Adaptive Corrected Lasso': AdaptiveCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu),
-        'Adaptive CoCoLasso': AdaptiveCoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu),
-        'RandomForest Corrected Lasso': RandomForestCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu, n_estimators=50, max_depth=5, weight_method='normalized')
+        'Adaptive CoCoLasso': AdaptiveCoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu)
     }
     
     all_results = {name: {
@@ -93,7 +93,6 @@ def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5
         models['CoCoLasso'] = CoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu)
         models['Adaptive Corrected Lasso'] = AdaptiveCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu)
         models['Adaptive CoCoLasso'] = AdaptiveCoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu)
-        models['RandomForest Corrected Lasso'] = RandomForestCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu, n_estimators=50, max_depth=5, weight_method='normalized')
         
         for name, model in models.items():
             result = evaluate_model_once(model, W, y, true_indices, beta_true, p)
@@ -137,13 +136,13 @@ def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5
 
 
 def run_parameter_test(test_name, param_name, param_values, fixed_params, n_simulations=20):
+    """运行单个参数变化的测试"""
     print(f"\n{'='*80}")
     print(f"测试: {test_name}")
     print(f"{'='*80}")
     
     model_names = ['Naive Lasso', 'Corrected Lasso', 'CoCoLasso', 
-                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso',
-                   'RandomForest Corrected Lasso']
+                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso']
     
     results = {name: {
         'f1': [], 'precision': [], 'recall': [], 
@@ -183,10 +182,10 @@ def run_parameter_test(test_name, param_name, param_values, fixed_params, n_simu
 
 
 def plot_comparison(x_values, results, xlabel, title, save_path):
+    """绘制对比图 - 展示所有6个评估指标"""
     model_names = ['Naive Lasso', 'Corrected Lasso', 'CoCoLasso', 
-                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso',
-                   'RandomForest Corrected Lasso']
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#e377c2']
+                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso']
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd']
     
     metrics = [
         ('precision', 'Precision'),
@@ -221,8 +220,9 @@ def plot_comparison(x_values, results, xlabel, title, save_path):
 
 
 def main():
+    """主函数 - 运行所有测试"""
     print("="*80)
-    print("高维测量误差变量选择工具包 - 综合对比测试（含随机森林）")
+    print("高维测量误差变量选择工具包 - 基准对比测试（Adaptive CoCoLasso）")
     print("="*80)
     
     save_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'results')
@@ -234,43 +234,56 @@ def main():
     
     print(f"\n模拟次数: {n_simulations}")
     
+    print("\n" + "="*80)
+    print("测试1: 正则化强度变化")
+    print("="*80)
     alphas = np.logspace(-2, -0.5, 20)
     fixed = {'n': 80, 'p': 100, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_alpha = run_parameter_test(
         "正则化强度变化", "alpha", alphas, fixed, n_simulations
     )
     plot_comparison(x_vals, res_alpha, 'Regularization Parameter (alpha)', 
-                 'Regularization', os.path.join(save_dir, f'alpha_comparison_rf_{timestamp}.png'))
+                 'Regularization', os.path.join(save_dir, f'alpha_comparison_baseline_{timestamp}.png'))
     
+    print("\n" + "="*80)
+    print("测试2: 变量个数变化")
+    print("="*80)
     p_values = np.linspace(50, 300, 20, dtype=int)
     fixed = {'n': 80, 'alpha': 0.1, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_p = run_parameter_test(
         "变量个数变化", "p", p_values, fixed, n_simulations
     )
     plot_comparison(x_vals, res_p, 'Number of Features (p)', 
-                 'Number of Features', os.path.join(save_dir, f'p_comparison_rf_{timestamp}.png'))
+                 'Number of Features', os.path.join(save_dir, f'p_comparison_baseline_{timestamp}.png'))
     
+    print("\n" + "="*80)
+    print("测试3: 样本量变化")
+    print("="*80)
     n_values = np.linspace(40, 200, 20, dtype=int)
     fixed = {'p': 100, 'alpha': 0.1, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_n = run_parameter_test(
         "样本量变化", "n", n_values, fixed, n_simulations
     )
     plot_comparison(x_vals, res_n, 'Number of Samples (n)', 
-                 'Number of Samples', os.path.join(save_dir, f'n_comparison_rf_{timestamp}.png'))
+                 'Number of Samples', os.path.join(save_dir, f'n_comparison_baseline_{timestamp}.png'))
     
+    print("\n" + "="*80)
+    print("测试4: 测量误差强度变化")
+    print("="*80)
     sigma_u_values = np.linspace(0.1, 1.0, 20)
     fixed = {'n': 80, 'p': 100, 's': 5, 'alpha': 0.1, 'sigma': 1.0}
     x_vals, res_sigma_u = run_parameter_test(
         "测量误差强度变化", "sigma_u", sigma_u_values, fixed, n_simulations
     )
     plot_comparison(x_vals, res_sigma_u, 'Measurement Error Std (sigma_u)', 
-                 'Measurement Error', os.path.join(save_dir, f'sigma_u_comparison_rf_{timestamp}.png'))
+                 'Measurement Error', os.path.join(save_dir, f'sigma_u_comparison_baseline_{timestamp}.png'))
     
     default_results = monte_carlo_evaluation(
         n_simulations=n_simulations,
         n=80, p=100, s=5, alpha=0.1, sigma=1.0, sigma_u=0.5
     )
     
+    # 保存所有结果
     all_results = {
         'alpha': {'x': alphas, 'results': res_alpha},
         'p': {'x': p_values, 'results': res_p},
@@ -279,7 +292,7 @@ def main():
         'default': default_results
     }
     
-    with open(os.path.join(save_dir, f'all_results_rf_{timestamp}.pkl'), 'wb') as f:
+    with open(os.path.join(save_dir, f'all_results_baseline_{timestamp}.pkl'), 'wb') as f:
         pickle.dump(all_results, f)
     
     print("\n" + "="*80)
