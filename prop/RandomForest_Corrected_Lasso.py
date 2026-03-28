@@ -2,12 +2,12 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Lasso
 from sklearn.ensemble import RandomForestRegressor
-from .Corrected_Lasso import CorrectedLasso
+from src.Corrected_Lasso import CorrectedLasso
 
 
 class RandomForestCorrectedLasso:
     """
-    随机森林修正Lasso回归（结合修正Lasso和随机森林特征重要性）
+    随机森林自适应修正Lasso回归（结合自适应修正Lasso和随机森林特征重要性）
 
     使用随机森林的特征重要性作为自适应权重，替换传统的基于系数估计的权重。
 
@@ -21,6 +21,18 @@ class RandomForestCorrectedLasso:
         随机森林的树数量
     max_depth : int
         随机森林的最大深度
+    max_features : str, int, float or None
+        每次分裂考虑的特征数，默认 'sqrt'
+    min_samples_split : int
+        内部节点再划分所需最小样本数
+    min_samples_leaf : int
+        叶子节点最小样本数
+    bootstrap : bool
+        是否有放回抽样
+    random_state : int or None
+        随机种子
+    n_jobs : int or None
+        并行线程数，-1 表示使用全部核心
     gamma : float
         权重指数
     weight_method : str
@@ -31,12 +43,20 @@ class RandomForestCorrectedLasso:
         收敛阈值
     """
 
-    def __init__(self, alpha=1.0, Sigma_uu=None, n_estimators=100, max_depth=10, 
+    def __init__(self, alpha=1.0, Sigma_uu=None, n_estimators=100, max_depth=10,
+                 max_features='sqrt', min_samples_split=2, min_samples_leaf=1,
+                 bootstrap=True, random_state=42, n_jobs=-1,
                  gamma=1.0, weight_method='normalized', max_iter=10000, tol=1e-6):
         self.alpha = alpha
         self.Sigma_uu = Sigma_uu
         self.n_estimators = n_estimators
         self.max_depth = max_depth
+        self.max_features = max_features
+        self.min_samples_split = min_samples_split
+        self.min_samples_leaf = min_samples_leaf
+        self.bootstrap = bootstrap
+        self.random_state = random_state
+        self.n_jobs = n_jobs
         self.gamma = gamma
         self.weight_method = weight_method
         self.max_iter = max_iter
@@ -61,8 +81,17 @@ class RandomForestCorrectedLasso:
         """
         n_samples, n_features = W.shape
 
+        ## 避免在 fit 中改写实例配置，防止复用实例时状态污染
         if self.Sigma_uu is None:
-            self.Sigma_uu = np.zeros((n_features, n_features))
+            Sigma_uu = np.zeros((n_features, n_features))
+        else:
+            Sigma_uu = self.Sigma_uu
+
+        ## 显式校验测量误差协方差维度，避免隐式广播错误
+        if Sigma_uu.shape != (n_features, n_features):
+            raise ValueError(
+                f"Sigma_uu shape must be ({n_features}, {n_features}), got {Sigma_uu.shape}"
+            )
 
         scaler_W = StandardScaler()
         scaler_y = StandardScaler(with_std=False)
@@ -71,14 +100,19 @@ class RandomForestCorrectedLasso:
         y_centered = scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
 
         W_std = scaler_W.scale_
-        Sigma_uu_scaled = self.Sigma_uu / np.outer(W_std, W_std)
+        W_std_safe = np.where(W_std > 1e-12, W_std, 1.0) ## 防止零方差特征导致缩放除零
+        Sigma_uu_scaled = Sigma_uu / np.outer(W_std_safe, W_std_safe)
 
         # 使用随机森林获取特征重要性
         rf = RandomForestRegressor(
             n_estimators=self.n_estimators,
             max_depth=self.max_depth,
-            random_state=42,
-            n_jobs=-1
+            max_features=self.max_features,
+            min_samples_split=self.min_samples_split,
+            min_samples_leaf=self.min_samples_leaf,
+            bootstrap=self.bootstrap,
+            random_state=self.random_state,
+            n_jobs=self.n_jobs
         )
         rf.fit(W_scaled, y_centered)
         self.rf_model_ = rf
@@ -126,7 +160,8 @@ class RandomForestCorrectedLasso:
         alpha_scaled = lasso.coef_
 
         beta_scaled = alpha_scaled * weights
-        beta_original_scale = beta_scaled / W_std
+        beta_original_scale = beta_scaled / W_std_safe
+        beta_original_scale = np.where(W_std > 1e-12, beta_original_scale, 0.0) ## 零方差特征不可识别，回写为 0 提升稳定性
         self.coef_ = beta_original_scale
         self.intercept_ = scaler_y.mean_ - np.dot(scaler_W.mean_, beta_original_scale)
 

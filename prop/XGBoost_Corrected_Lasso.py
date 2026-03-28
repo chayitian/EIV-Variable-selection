@@ -2,12 +2,12 @@ import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Lasso
 import xgboost as xgb
-from .Corrected_Lasso import CorrectedLasso
+from src.Corrected_Lasso import CorrectedLasso
 
 
 class XGBoostCorrectedLasso:
     """
-    XGBoost修正Lasso回归（结合修正Lasso和XGBoost特征重要性）
+    XGBoost自适应修正Lasso回归（结合自适应修正Lasso和XGBoost特征重要性）
 
     使用XGBoost的特征重要性作为自适应权重，替换传统的基于系数估计的权重。
 
@@ -25,6 +25,26 @@ class XGBoostCorrectedLasso:
         XGBoost的学习率
     importance_type : str
         特征重要性类型: 'gain', 'weight', 'cover'
+    subsample : float
+        每棵树的样本采样比例
+    colsample_bytree : float
+        每棵树的特征采样比例
+    min_child_weight : float
+        子节点最小样本权重和
+    xgb_gamma : float
+        节点分裂所需的最小损失下降（XGBoost 原生 gamma）
+    reg_alpha : float
+        L1 正则项系数
+    reg_lambda : float
+        L2 正则项系数
+    objective : str
+        学习目标函数
+    random_state : int or None
+        随机种子
+    n_jobs : int or None
+        并行线程数
+    verbosity : int
+        日志级别
     gamma : float
         权重指数
     weight_method : str
@@ -35,15 +55,28 @@ class XGBoostCorrectedLasso:
         收敛阈值
     """
 
-    def __init__(self, alpha=1.0, Sigma_uu=None, n_estimators=100, max_depth=10, 
-                 learning_rate=0.1, importance_type='gain', gamma=1.0, weight_method='normalized',
-                 max_iter=10000, tol=1e-6):
+    def __init__(self, alpha=1.0, Sigma_uu=None, n_estimators=100, max_depth=10,
+                 learning_rate=0.1, importance_type='gain',
+                 subsample=0.8, colsample_bytree=0.8, min_child_weight=1.0,
+                 xgb_gamma=0.0, reg_alpha=0.0, reg_lambda=1.0,
+                 objective='reg:squarederror', random_state=42, n_jobs=1, verbosity=0,
+                 gamma=1.0, weight_method='normalized', max_iter=10000, tol=1e-6):
         self.alpha = alpha
         self.Sigma_uu = Sigma_uu
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.learning_rate = learning_rate
         self.importance_type = importance_type
+        self.subsample = subsample
+        self.colsample_bytree = colsample_bytree
+        self.min_child_weight = min_child_weight
+        self.xgb_gamma = xgb_gamma
+        self.reg_alpha = reg_alpha
+        self.reg_lambda = reg_lambda
+        self.objective = objective
+        self.random_state = random_state
+        self.n_jobs = n_jobs
+        self.verbosity = verbosity
         self.gamma = gamma
         self.weight_method = weight_method
         self.max_iter = max_iter
@@ -68,8 +101,17 @@ class XGBoostCorrectedLasso:
         """
         n_samples, n_features = W.shape
 
+        ## 避免在 fit 中改写实例配置，防止复用实例时状态污染
         if self.Sigma_uu is None:
-            self.Sigma_uu = np.zeros((n_features, n_features))
+            Sigma_uu = np.zeros((n_features, n_features))
+        else:
+            Sigma_uu = self.Sigma_uu
+
+        ## 显式校验测量误差协方差维度，避免隐式广播错误
+        if Sigma_uu.shape != (n_features, n_features):
+            raise ValueError(
+                f"Sigma_uu shape must be ({n_features}, {n_features}), got {Sigma_uu.shape}"
+            )
 
         scaler_W = StandardScaler()
         scaler_y = StandardScaler(with_std=False)
@@ -78,7 +120,8 @@ class XGBoostCorrectedLasso:
         y_centered = scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
 
         W_std = scaler_W.scale_
-        Sigma_uu_scaled = self.Sigma_uu / np.outer(W_std, W_std)
+        W_std_safe = np.where(W_std > 1e-12, W_std, 1.0) ## 防止零方差特征导致缩放除零
+        Sigma_uu_scaled = Sigma_uu / np.outer(W_std_safe, W_std_safe)
 
         # 使用XGBoost获取特征重要性
         xgb_model = xgb.XGBRegressor(
@@ -86,9 +129,16 @@ class XGBoostCorrectedLasso:
             max_depth=self.max_depth,
             learning_rate=self.learning_rate,
             importance_type=self.importance_type,
-            random_state=42,
-            n_jobs=1,
-            verbosity=0
+            subsample=self.subsample,
+            colsample_bytree=self.colsample_bytree,
+            min_child_weight=self.min_child_weight,
+            gamma=self.xgb_gamma,
+            reg_alpha=self.reg_alpha,
+            reg_lambda=self.reg_lambda,
+            objective=self.objective,
+            random_state=self.random_state,
+            n_jobs=self.n_jobs,
+            verbosity=self.verbosity
         )
         xgb_model.fit(W_scaled, y_centered)
         self.xgb_model_ = xgb_model
@@ -136,7 +186,8 @@ class XGBoostCorrectedLasso:
         alpha_scaled = lasso.coef_
 
         beta_scaled = alpha_scaled * weights
-        beta_original_scale = beta_scaled / W_std
+        beta_original_scale = beta_scaled / W_std_safe
+        beta_original_scale = np.where(W_std > 1e-12, beta_original_scale, 0.0) ## 零方差特征不可识别，回写为 0 提升稳定性
         self.coef_ = beta_original_scale
         self.intercept_ = scaler_y.mean_ - np.dot(scaler_W.mean_, beta_original_scale)
 

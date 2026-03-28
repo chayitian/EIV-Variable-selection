@@ -15,8 +15,7 @@ from src.Lasso import LassoRegression
 from src.Corrected_Lasso import CorrectedLasso
 from src.CoCoLasso import CoCoLasso
 from src.Adaptive_Corrected_Lasso import AdaptiveCorrectedLasso
-from src.Adaptive_CoCoLasso import AdaptiveCoCoLasso
-from src.RandomForest_Corrected_Lasso import RandomForestCorrectedLasso
+from prop.RandomForest_Corrected_Lasso import RandomForestCorrectedLasso
 from src.vs_evaluate import selection_accuracy
 
 
@@ -50,6 +49,9 @@ def evaluate_model_once(model, W, y, true_indices, beta_true, p):
             'precision': metrics['Precision'],
             'recall': metrics['Recall'],
             'f1': metrics['F1'],
+            'fdr': metrics['FDR'],
+            'exact_selection_rate': metrics['Exact_Selection_Rate'],
+            'mcc': metrics['MCC'],
             'specificity': metrics['Specificity'],
             'hamming': metrics['Hamming_Distance'],
             'accuracy': metrics['Accuracy'],
@@ -62,24 +64,40 @@ def evaluate_model_once(model, W, y, true_indices, beta_true, p):
 
 def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5):
     model_names = ['Naive Lasso', 'Corrected Lasso', 'CoCoLasso', 
-                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso',
+                   'Adaptive Corrected Lasso',
                    'RandomForest Corrected Lasso']
     
     W, y, true_indices, beta_true, Sigma_uu = generate_data(
         n=n, p=p, s=s, sigma=sigma, sigma_u=sigma_u, seed=0
     )
 
+    rf_tree_params = {
+        'n_estimators': 100,
+        'max_depth': 8,
+        'max_features': 'sqrt',
+        'min_samples_split': 4,
+        'min_samples_leaf': 2,
+        'bootstrap': True,
+        'random_state': 42,
+        'n_jobs': -1
+    }
+
     models = {
         'Naive Lasso': LassoRegression(alpha=alpha),
         'Corrected Lasso': CorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu),
         'CoCoLasso': CoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu),
         'Adaptive Corrected Lasso': AdaptiveCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu),
-        'Adaptive CoCoLasso': AdaptiveCoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu),
-        'RandomForest Corrected Lasso': RandomForestCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu, n_estimators=50, max_depth=5, weight_method='normalized')
+        'RandomForest Corrected Lasso': RandomForestCorrectedLasso(
+            alpha=alpha,
+            Sigma_uu=Sigma_uu,
+            gamma=1.0,
+            weight_method='max_scaled',
+            **rf_tree_params
+        )
     }
     
     all_results = {name: {
-        'precision': [], 'recall': [], 'f1': [], 
+        'precision': [], 'recall': [], 'f1': [], 'fdr': [], 'exact_selection_rate': [], 'mcc': [],
         'specificity': [], 'hamming': [], 'accuracy': [], 
         'mse_beta': [], 'selected_count': [], 'success_count': 0
     } for name in model_names}
@@ -92,8 +110,13 @@ def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5
         models['Corrected Lasso'] = CorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu)
         models['CoCoLasso'] = CoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu)
         models['Adaptive Corrected Lasso'] = AdaptiveCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu)
-        models['Adaptive CoCoLasso'] = AdaptiveCoCoLasso(alpha=alpha, Sigma_uu=Sigma_uu)
-        models['RandomForest Corrected Lasso'] = RandomForestCorrectedLasso(alpha=alpha, Sigma_uu=Sigma_uu, n_estimators=50, max_depth=5, weight_method='normalized')
+        models['RandomForest Corrected Lasso'] = RandomForestCorrectedLasso(
+            alpha=alpha,
+            Sigma_uu=Sigma_uu,
+            gamma=1.0,
+            weight_method='max_scaled',
+            **rf_tree_params
+        )
         
         for name, model in models.items():
             result = evaluate_model_once(model, W, y, true_indices, beta_true, p)
@@ -101,6 +124,9 @@ def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5
                 all_results[name]['precision'].append(result['precision'])
                 all_results[name]['recall'].append(result['recall'])
                 all_results[name]['f1'].append(result['f1'])
+                all_results[name]['fdr'].append(result['fdr'])
+                all_results[name]['exact_selection_rate'].append(result['exact_selection_rate'])
+                all_results[name]['mcc'].append(result['mcc'])
                 all_results[name]['specificity'].append(result['specificity'])
                 all_results[name]['hamming'].append(result['hamming'])
                 all_results[name]['accuracy'].append(result['accuracy'])
@@ -119,6 +145,12 @@ def monte_carlo_evaluation(n_simulations, n, p, s, alpha, sigma=1.0, sigma_u=0.5
                 'recall_std': np.std(all_results[name]['recall']),
                 'f1': np.mean(all_results[name]['f1']),
                 'f1_std': np.std(all_results[name]['f1']),
+                'fdr': np.mean(all_results[name]['fdr']),
+                'fdr_std': np.std(all_results[name]['fdr']),
+                'exact_selection_rate': np.mean(all_results[name]['exact_selection_rate']),
+                'exact_selection_rate_std': np.std(all_results[name]['exact_selection_rate']),
+                'mcc': np.mean(all_results[name]['mcc']),
+                'mcc_std': np.std(all_results[name]['mcc']),
                 'specificity': np.mean(all_results[name]['specificity']),
                 'specificity_std': np.std(all_results[name]['specificity']),
                 'hamming': np.mean(all_results[name]['hamming']),
@@ -142,11 +174,11 @@ def run_parameter_test(test_name, param_name, param_values, fixed_params, n_simu
     print(f"{'='*80}")
     
     model_names = ['Naive Lasso', 'Corrected Lasso', 'CoCoLasso', 
-                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso',
+                   'Adaptive Corrected Lasso',
                    'RandomForest Corrected Lasso']
     
     results = {name: {
-        'f1': [], 'precision': [], 'recall': [], 
+        'f1': [], 'precision': [], 'recall': [], 'fdr': [], 'exact_selection_rate': [], 'mcc': [],
         'specificity': [], 'hamming': [], 'accuracy': [], 'mse_beta': []
     } for name in model_names}
     
@@ -166,6 +198,9 @@ def run_parameter_test(test_name, param_name, param_values, fixed_params, n_simu
                 results[name]['f1'].append(avg_res[name]['f1'])
                 results[name]['precision'].append(avg_res[name]['precision'])
                 results[name]['recall'].append(avg_res[name]['recall'])
+                results[name]['fdr'].append(avg_res[name]['fdr'])
+                results[name]['exact_selection_rate'].append(avg_res[name]['exact_selection_rate'])
+                results[name]['mcc'].append(avg_res[name]['mcc'])
                 results[name]['specificity'].append(avg_res[name]['specificity'])
                 results[name]['hamming'].append(avg_res[name]['hamming'])
                 results[name]['accuracy'].append(avg_res[name]['accuracy'])
@@ -174,6 +209,9 @@ def run_parameter_test(test_name, param_name, param_values, fixed_params, n_simu
                 results[name]['f1'].append(np.nan)
                 results[name]['precision'].append(np.nan)
                 results[name]['recall'].append(np.nan)
+                results[name]['fdr'].append(np.nan)
+                results[name]['exact_selection_rate'].append(np.nan)
+                results[name]['mcc'].append(np.nan)
                 results[name]['specificity'].append(np.nan)
                 results[name]['hamming'].append(np.nan)
                 results[name]['accuracy'].append(np.nan)
@@ -184,17 +222,24 @@ def run_parameter_test(test_name, param_name, param_values, fixed_params, n_simu
 
 def plot_comparison(x_values, results, xlabel, title, save_path):
     model_names = ['Naive Lasso', 'Corrected Lasso', 'CoCoLasso', 
-                   'Adaptive Corrected Lasso', 'Adaptive CoCoLasso',
+                   'Adaptive Corrected Lasso',
                    'RandomForest Corrected Lasso']
-    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#e377c2']
+    colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#e377c2']
+    marker_map = {
+        'Naive Lasso': 'o',
+        'Corrected Lasso': 's',
+        'CoCoLasso': '^',
+        'Adaptive Corrected Lasso': 'D',
+        'RandomForest Corrected Lasso': 'P'
+    }
     
     metrics = [
-        ('precision', 'Precision'),
         ('recall', 'Recall'),
         ('f1', 'F1 Score'),
-        ('specificity', 'Specificity'),
-        ('accuracy', 'Accuracy'),
-        ('hamming', 'Hamming Distance')
+        ('fdr', 'FDR'),
+        ('exact_selection_rate', 'EXACT_Selection_Rate'),
+        ('hamming', 'Hamming Distance'),
+        ('mcc', 'MCC')
     ]
     
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
@@ -202,8 +247,9 @@ def plot_comparison(x_values, results, xlabel, title, save_path):
     for i, (metric, metric_name) in enumerate(metrics):
         ax = axes[i//3, i%3]
         for j, name in enumerate(model_names):
-            ax.plot(x_values, results[name][metric], 'o-', label=name, 
-                    color=colors[j], linewidth=2, markersize=6)
+            ax.plot(x_values, results[name][metric], label=name,
+                    color=colors[j], linewidth=2, markersize=6,
+                    linestyle='-', marker=marker_map[name])
         ax.set_xlabel(xlabel, fontsize=11)
         ax.set_ylabel(metric_name, fontsize=11)
         ax.set_title(f'{metric_name} vs {title}', fontsize=13, fontweight='bold')
@@ -234,24 +280,24 @@ def main():
     
     print(f"\n模拟次数: {n_simulations}")
     
-    alphas = np.logspace(-2, -0.5, 20)
-    fixed = {'n': 80, 'p': 100, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
+    alphas = np.logspace(-2, 0, 20)
+    fixed = {'n': 100, 'p': 10, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_alpha = run_parameter_test(
         "正则化强度变化", "alpha", alphas, fixed, n_simulations
     )
     plot_comparison(x_vals, res_alpha, 'Regularization Parameter (alpha)', 
                  'Regularization', os.path.join(save_dir, f'alpha_comparison_rf_{timestamp}.png'))
     
-    p_values = np.linspace(50, 300, 20, dtype=int)
-    fixed = {'n': 80, 'alpha': 0.1, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
+    p_values = np.linspace(10, 300, 20, dtype=int)
+    fixed = {'n': 100, 'alpha': 0.1, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_p = run_parameter_test(
         "变量个数变化", "p", p_values, fixed, n_simulations
     )
     plot_comparison(x_vals, res_p, 'Number of Features (p)', 
                  'Number of Features', os.path.join(save_dir, f'p_comparison_rf_{timestamp}.png'))
     
-    n_values = np.linspace(40, 200, 20, dtype=int)
-    fixed = {'p': 100, 'alpha': 0.1, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
+    n_values = np.linspace(40, 1000, 20, dtype=int)
+    fixed = {'p': 10, 'alpha': 0.1, 's': 5, 'sigma': 1.0, 'sigma_u': 0.5}
     x_vals, res_n = run_parameter_test(
         "样本量变化", "n", n_values, fixed, n_simulations
     )
@@ -259,7 +305,7 @@ def main():
                  'Number of Samples', os.path.join(save_dir, f'n_comparison_rf_{timestamp}.png'))
     
     sigma_u_values = np.linspace(0.1, 1.0, 20)
-    fixed = {'n': 80, 'p': 100, 's': 5, 'alpha': 0.1, 'sigma': 1.0}
+    fixed = {'n': 100, 'p': 10, 's': 5, 'alpha': 0.1, 'sigma': 1.0}
     x_vals, res_sigma_u = run_parameter_test(
         "测量误差强度变化", "sigma_u", sigma_u_values, fixed, n_simulations
     )
@@ -268,7 +314,7 @@ def main():
     
     default_results = monte_carlo_evaluation(
         n_simulations=n_simulations,
-        n=80, p=100, s=5, alpha=0.1, sigma=1.0, sigma_u=0.5
+        n=100, p=10, s=5, alpha=0.1, sigma=1.0, sigma_u=0.5
     )
     
     all_results = {

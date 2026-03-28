@@ -70,7 +70,8 @@ class LassoRegression:
                 z = np.sum(X_centered[:, j] ** 2) / n_samples
 
                 # 坐标更新
-                beta[j] = self._soft_threshold(rho, self.alpha) / z
+                z_safe = max(z, 1e-12) ## 防止常数列或近常数列导致除零
+                beta[j] = self._soft_threshold(rho, self.alpha) / z_safe
 
             # 收敛判断
             if np.max(np.abs(beta - beta_old)) < self.tol:

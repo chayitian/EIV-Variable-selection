@@ -104,7 +104,8 @@ class AdaptiveLasso:
 
                 z_j = np.sum(X_weighted[:, j] ** 2) / n_samples
 
-                beta_weighted[j] = self._soft_threshold(rho_j, self.alpha) / z_j
+                z_j_safe = max(z_j, 1e-12) ## 防止加权后近零方差列导致除零
+                beta_weighted[j] = self._soft_threshold(rho_j, self.alpha) / z_j_safe
 
             if np.max(np.abs(beta_weighted - beta_old)) < self.tol:
                 break

@@ -40,6 +40,10 @@ class CoCoLasso:
         """
         将矩阵投影到最近半正定矩阵空间（ADMM算法）
         """
+        ## ADMM 罚参数必须为正，避免 U / rho 数值异常
+        if self.rho <= 0:
+            raise ValueError("rho must be positive for ADMM updates")
+
         p = M.shape[0]
         X = np.copy(M)
         Z = np.copy(M)
@@ -74,8 +78,17 @@ class CoCoLasso:
         """
         n_samples, n_features = W.shape
 
+        ## 避免在 fit 中改写实例配置，防止复用实例时状态污染
         if self.Sigma_uu is None:
-            self.Sigma_uu = np.zeros((n_features, n_features))
+            Sigma_uu = np.zeros((n_features, n_features))
+        else:
+            Sigma_uu = self.Sigma_uu
+
+        ## 显式校验测量误差协方差维度，避免隐式广播错误
+        if Sigma_uu.shape != (n_features, n_features):
+            raise ValueError(
+                f"Sigma_uu shape must be ({n_features}, {n_features}), got {Sigma_uu.shape}"
+            )
 
         self.scaler_W_ = StandardScaler()
         self.scaler_y_ = StandardScaler(with_std=False)
@@ -84,7 +97,8 @@ class CoCoLasso:
         y_centered = self.scaler_y_.fit_transform(y.reshape(-1, 1)).flatten()
 
         W_std = self.scaler_W_.scale_
-        Sigma_uu_scaled = self.Sigma_uu / np.outer(W_std, W_std)
+        W_std_safe = np.where(W_std > 1e-12, W_std, 1.0) ## 防止零方差特征导致缩放除零
+        Sigma_uu_scaled = Sigma_uu / np.outer(W_std_safe, W_std_safe)
 
         Sigma_hat = (W_scaled.T @ W_scaled) / n_samples - Sigma_uu_scaled
         rho_hat = (W_scaled.T @ y_centered) / n_samples
@@ -105,7 +119,8 @@ class CoCoLasso:
         lasso.fit(W_tilde, y_tilde)
         beta_scaled = lasso.coef_
 
-        beta_original_scale = beta_scaled / W_std
+        beta_original_scale = beta_scaled / W_std_safe
+        beta_original_scale = np.where(W_std > 1e-12, beta_original_scale, 0.0) ## 零方差特征不可识别，回写为 0 提升稳定性
         self.coef_ = beta_original_scale
         self.intercept_ = self.scaler_y_.mean_ - np.dot(self.scaler_W_.mean_, beta_original_scale)
 
