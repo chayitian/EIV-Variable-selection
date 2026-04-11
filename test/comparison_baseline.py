@@ -11,9 +11,9 @@ warnings.filterwarnings('ignore')
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from src.models.base import LassoRegression
-from src.models.eiv.canonical import CorrectedLasso, CoCoLasso
-from src.models.eiv.adaptive import AdaptiveCorrectedLasso, AdaptiveCoCoLasso
+from src.models.base import Lasso
+from src.models.eiv.canonical import CLasso, CoCoLasso
+from src.models.eiv.adaptive import ACLasso, ACoCoLasso
 from src.experiments import monte_carlo_evaluation, run_parameter_test, plot_comparison
 
 
@@ -26,11 +26,11 @@ def parse_args():
 
 def build_model_builders():
     return {
-        'Naive Lasso': lambda alpha, sigma_uu: LassoRegression(alpha=alpha),
-        'Corrected Lasso': lambda alpha, sigma_uu: CorrectedLasso(alpha=alpha, Sigma_uu=sigma_uu),
+        'Naive Lasso': lambda alpha, sigma_uu: Lasso(alpha=alpha),
+        'Corrected Lasso': lambda alpha, sigma_uu: CLasso(alpha=alpha, Sigma_uu=sigma_uu),
         'CoCoLasso': lambda alpha, sigma_uu: CoCoLasso(alpha=alpha, Sigma_uu=sigma_uu),
-        'Adaptive Corrected Lasso': lambda alpha, sigma_uu: AdaptiveCorrectedLasso(alpha=alpha, Sigma_uu=sigma_uu),
-        'Adaptive CoCoLasso': lambda alpha, sigma_uu: AdaptiveCoCoLasso(alpha=alpha, Sigma_uu=sigma_uu),
+        'Adaptive Corrected Lasso': lambda alpha, sigma_uu: ACLasso(alpha=alpha, Sigma_uu=sigma_uu),
+        'Adaptive CoCoLasso': lambda alpha, sigma_uu: ACoCoLasso(alpha=alpha, Sigma_uu=sigma_uu),
     }
 
 

@@ -2,14 +2,14 @@ import numpy as np
 import time
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Lasso
-from sklearn.ensemble import RandomForestRegressor
+import xgboost as xgb
 
 
-class RandomForestCorrectedLasso:
+class XGBoostACLasso:
     """
-    随机森林自适应修正Lasso回归（结合自适应修正Lasso和随机森林特征重要性）
+    XGBoost自适应修正Lasso回归（结合自适应修正Lasso和XGBoost特征重要性）
 
-    使用随机森林的特征重要性作为自适应权重，替换传统的基于系数估计的权重。
+    使用XGBoost的特征重要性作为自适应权重，替换传统的基于系数估计的权重。
 
     参数
     ----------
@@ -18,21 +18,33 @@ class RandomForestCorrectedLasso:
     Sigma_uu : np.ndarray
         测量误差协方差矩阵
     n_estimators : int
-        随机森林的树数量
+        XGBoost的树数量
     max_depth : int
-        随机森林的最大深度
-    max_features : str, int, float or None
-        每次分裂考虑的特征数，默认 'sqrt'
-    min_samples_split : int
-        内部节点再划分所需最小样本数
-    min_samples_leaf : int
-        叶子节点最小样本数
-    bootstrap : bool
-        是否有放回抽样
+        XGBoost的最大深度
+    learning_rate : float
+        XGBoost的学习率
+    importance_type : str
+        特征重要性类型: 'gain', 'weight', 'cover'
+    subsample : float
+        每棵树的样本采样比例
+    colsample_bytree : float
+        每棵树的特征采样比例
+    min_child_weight : float
+        子节点最小样本权重和
+    xgb_gamma : float
+        节点分裂所需的最小损失下降（XGBoost 原生 gamma）
+    reg_alpha : float
+        L1 正则项系数
+    reg_lambda : float
+        L2 正则项系数
+    objective : str
+        学习目标函数
     random_state : int or None
         随机种子
     n_jobs : int or None
-        并行线程数，-1 表示使用全部核心
+        并行线程数
+    verbosity : int
+        日志级别
     gamma : float
         权重指数
     weight_method : str
@@ -44,19 +56,27 @@ class RandomForestCorrectedLasso:
     """
 
     def __init__(self, alpha=1.0, Sigma_uu=None, n_estimators=100, max_depth=10,
-                 max_features='sqrt', min_samples_split=2, min_samples_leaf=1,
-                 bootstrap=True, random_state=42, n_jobs=-1,
+                 learning_rate=0.1, importance_type='gain',
+                 subsample=0.8, colsample_bytree=0.8, min_child_weight=1.0,
+                 xgb_gamma=0.0, reg_alpha=0.0, reg_lambda=1.0,
+                 objective='reg:squarederror', random_state=42, n_jobs=1, verbosity=0,
                  gamma=1.0, weight_method='normalized', max_iter=10000, tol=1e-6):
         self.alpha = alpha
         self.Sigma_uu = Sigma_uu
         self.n_estimators = n_estimators
         self.max_depth = max_depth
-        self.max_features = max_features
-        self.min_samples_split = min_samples_split
-        self.min_samples_leaf = min_samples_leaf
-        self.bootstrap = bootstrap
+        self.learning_rate = learning_rate
+        self.importance_type = importance_type
+        self.subsample = subsample
+        self.colsample_bytree = colsample_bytree
+        self.min_child_weight = min_child_weight
+        self.xgb_gamma = xgb_gamma
+        self.reg_alpha = reg_alpha
+        self.reg_lambda = reg_lambda
+        self.objective = objective
         self.random_state = random_state
         self.n_jobs = n_jobs
+        self.verbosity = verbosity
         self.gamma = gamma
         self.weight_method = weight_method
         self.max_iter = max_iter
@@ -66,7 +86,7 @@ class RandomForestCorrectedLasso:
         self.intercept_ = None
         self.feature_importances_ = None
         self.weights_ = None
-        self.rf_model_ = None
+        self.xgb_model_ = None
 
         ### 新增诊断字段，不改变原有 fit/predict 接口，用于时间与数值稳定性分析
         self.fit_time_ = None
@@ -78,7 +98,7 @@ class RandomForestCorrectedLasso:
 
     def fit(self, W, y):
         """
-        拟合随机森林修正Lasso
+        拟合XGBoost修正Lasso
 
         参数
         ----------
@@ -87,7 +107,7 @@ class RandomForestCorrectedLasso:
         y : np.ndarray
             响应变量向量 (n_samples,)
         """
-        ### 记录模型总耗时，便于与 CoCoLasso/AdaptiveCoCoLasso 做计算代价对比
+        ### 记录模型总耗时，便于与 CoCoLasso/ACoCoLasso 做计算代价对比
         fit_start = time.perf_counter()
 
         n_samples, n_features = W.shape
@@ -114,20 +134,26 @@ class RandomForestCorrectedLasso:
         W_std_safe = np.where(W_std > 1e-12, W_std, 1.0) ## 防止零方差特征导致缩放除零
         Sigma_uu_scaled = Sigma_uu / np.outer(W_std_safe, W_std_safe)
 
-        # 使用随机森林获取特征重要性
-        rf = RandomForestRegressor(
+        # 使用XGBoost获取特征重要性
+        xgb_model = xgb.XGBRegressor(
             n_estimators=self.n_estimators,
             max_depth=self.max_depth,
-            max_features=self.max_features,
-            min_samples_split=self.min_samples_split,
-            min_samples_leaf=self.min_samples_leaf,
-            bootstrap=self.bootstrap,
+            learning_rate=self.learning_rate,
+            importance_type=self.importance_type,
+            subsample=self.subsample,
+            colsample_bytree=self.colsample_bytree,
+            min_child_weight=self.min_child_weight,
+            gamma=self.xgb_gamma,
+            reg_alpha=self.reg_alpha,
+            reg_lambda=self.reg_lambda,
+            objective=self.objective,
             random_state=self.random_state,
-            n_jobs=self.n_jobs
+            n_jobs=self.n_jobs,
+            verbosity=self.verbosity
         )
-        rf.fit(W_scaled, y_centered)
-        self.rf_model_ = rf
-        feature_importances = rf.feature_importances_
+        xgb_model.fit(W_scaled, y_centered)
+        self.xgb_model_ = xgb_model
+        feature_importances = xgb_model.feature_importances_
         self.feature_importances_ = feature_importances.copy()
 
         # 基于特征重要性计算权重

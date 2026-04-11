@@ -1,25 +1,25 @@
-from .base import AdaptiveLasso, LassoRegression, OLS
+from .base import ALasso, Lasso, OLS
 from .eiv import (
-    AdaptiveCoCoLasso,
-    AdaptiveCorrectedLasso,
+    ACoCoLasso,
+    ACLasso,
+    CLasso,
+    COLS,
     CoCoLasso,
-    CorrectedLasso,
-    CorrectedOLS,
-    CorrectedRidge,
-    RandomForestCorrectedLasso,
-    XGBoostCorrectedLasso,
+    CRidge,
+    RFACLasso,
+    XGBoostACLasso,
 )
 
 __all__ = [
     'OLS',
-    'LassoRegression',
-    'AdaptiveLasso',
-    'CorrectedOLS',
-    'CorrectedRidge',
-    'CorrectedLasso',
+    'Lasso',
+    'ALasso',
+    'COLS',
+    'CRidge',
+    'CLasso',
     'CoCoLasso',
-    'AdaptiveCorrectedLasso',
-    'AdaptiveCoCoLasso',
-    'RandomForestCorrectedLasso',
-    'XGBoostCorrectedLasso',
+    'ACLasso',
+    'ACoCoLasso',
+    'RFACLasso',
+    'XGBoostACLasso',
 ]

@@ -1,6 +1,6 @@
 import numpy as np
 
-def selection_accuracy(true_indices, selected_indices, total_features, beta_true=None, beta_hat=None):
+def selection_accuracy(true_indices, selected_indices, total_features, beta_true=None, beta_hat=None, x_true=None):
     """
     评估变量选择的准确性（模拟实验中使用）
     
@@ -10,6 +10,7 @@ def selection_accuracy(true_indices, selected_indices, total_features, beta_true
     total_features: 总特征数 p (int)
     beta_true: 真实的系数向量 (可选，用于计算 L2 Error，长度需为 p)
     beta_hat: 估计的系数向量 (可选，用于计算 L2 Error，长度需为 p)
+    x_true: 真实无误差设计矩阵 X (可选，二维数组，形状为 (n_samples, p)，用于计算 PE)
     
     返回 (包含以下评估指标的字典):
     - TP, FP, FN, TN: 基础混淆矩阵指标（真正例，假正例，假反例，真反例）
@@ -26,6 +27,8 @@ def selection_accuracy(true_indices, selected_indices, total_features, beta_true
     - L1_Error: 绝对估计误差和 (仅在提供 beta_true 和 beta_hat 时非 None)
     - L2_Error: 估计量与真实系数量级上的 L2 误差（仅在提供 beta_true 和 beta_hat 时非 None）
     - Linf_Error: 最大系数偏差 (Max Deviation, 仅在提供 beta_true 和 beta_hat 时非 None)
+    - MSE: 系数估计的 L2 范数平方误差 ||beta - beta_hat||_2^2（仅在提供 beta_true 和 beta_hat 时非 None）
+    - PE: 预测误差 (beta - beta_hat)^T Sigma_X (beta - beta_hat)，其中 Sigma_X = X^T X / n（仅在同时提供 beta_true、beta_hat、x_true 时非 None）
     """
     # 转换为集合
     true_set = set(true_indices)
@@ -71,6 +74,8 @@ def selection_accuracy(true_indices, selected_indices, total_features, beta_true
     l1_error = None
     l2_error = None 
     linf_error = None
+    mse = None
+    pe = None
     if beta_true is not None and beta_hat is not None:
         beta_true_arr = np.asarray(beta_true)
         beta_hat_arr = np.asarray(beta_hat)
@@ -81,6 +86,19 @@ def selection_accuracy(true_indices, selected_indices, total_features, beta_true
         l1_error = float(np.linalg.norm(diff, ord=1)) # L1 Error：系数绝对误差和（衡量整体收缩偏差）
         l2_error = float(np.linalg.norm(diff))        # L2 Error：欧几里得距离误差（最为常用的衡量量级偏差的指标）
         linf_error = float(np.linalg.norm(diff, ord=np.inf)) # L无穷 Error：单一系数的最大绝对误差（最坏情况的估计偏差）
+        mse = float(np.dot(diff, diff))               # MSE：按定义计算 ||beta - beta_hat||_2^2
+
+        if x_true is not None:
+            x_true_arr = np.asarray(x_true)
+            if x_true_arr.ndim != 2:
+                raise ValueError("x_true must be a 2D array with shape (n_samples, total_features)")
+            if x_true_arr.shape[1] != total_features:
+                raise ValueError("x_true second dimension must equal total_features")
+            if x_true_arr.shape[0] <= 0:
+                raise ValueError("x_true must contain at least one sample")
+
+            sigma_x = (x_true_arr.T @ x_true_arr) / x_true_arr.shape[0]
+            pe = float(diff.T @ sigma_x @ diff)
 
     return {
         'TP': TP, 'FP': FP, 'FN': FN, 'TN': TN,
@@ -96,5 +114,7 @@ def selection_accuracy(true_indices, selected_indices, total_features, beta_true
         'Hamming_Distance': hamming,
         'L1_Error': l1_error,
         'L2_Error': l2_error,
-        'Linf_Error': linf_error
+        'Linf_Error': linf_error,
+        'MSE': mse,
+        'PE': pe
     }

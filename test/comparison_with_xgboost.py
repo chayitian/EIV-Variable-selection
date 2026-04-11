@@ -11,10 +11,10 @@ warnings.filterwarnings('ignore')
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from src.models.base import LassoRegression
-from src.models.eiv.canonical import CorrectedLasso, CoCoLasso
-from src.models.eiv.adaptive import AdaptiveCorrectedLasso
-from src.models.eiv.feature_weighted import XGBoostCorrectedLasso
+from src.models.base import Lasso
+from src.models.eiv.canonical import CLasso, CoCoLasso
+from src.models.eiv.adaptive import ACLasso
+from src.models.eiv.feature_weighted import XGBoostACLasso
 from src.experiments import monte_carlo_evaluation, run_parameter_test, plot_comparison
 
 
@@ -45,11 +45,11 @@ def build_model_builders(weight_method):
     }
 
     return {
-        'Naive Lasso': lambda alpha, sigma_uu: LassoRegression(alpha=alpha),
-        'Corrected Lasso': lambda alpha, sigma_uu: CorrectedLasso(alpha=alpha, Sigma_uu=sigma_uu),
+        'Naive Lasso': lambda alpha, sigma_uu: Lasso(alpha=alpha),
+        'Corrected Lasso': lambda alpha, sigma_uu: CLasso(alpha=alpha, Sigma_uu=sigma_uu),
         'CoCoLasso': lambda alpha, sigma_uu: CoCoLasso(alpha=alpha, Sigma_uu=sigma_uu),
-        'Adaptive Corrected Lasso': lambda alpha, sigma_uu: AdaptiveCorrectedLasso(alpha=alpha, Sigma_uu=sigma_uu),
-        'XGBoost Corrected Lasso': lambda alpha, sigma_uu: XGBoostCorrectedLasso(
+        'Adaptive Corrected Lasso': lambda alpha, sigma_uu: ACLasso(alpha=alpha, Sigma_uu=sigma_uu),
+        'XGBoost Corrected Lasso': lambda alpha, sigma_uu: XGBoostACLasso(
             alpha=alpha,
             Sigma_uu=sigma_uu,
             gamma=1.0,

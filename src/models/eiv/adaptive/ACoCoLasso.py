@@ -2,10 +2,10 @@ import numpy as np
 import time
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Lasso
-from ..canonical import CorrectedOLS, CorrectedRidge
+from ..canonical import CoCoLasso, COLS, CRidge
 
 
-class AdaptiveCoCoLasso:
+class ACoCoLasso:
     """
     自适应CoCoLasso（创新模型 - 结合CoCoLasso和自适应Lasso）
 
@@ -21,7 +21,7 @@ class AdaptiveCoCoLasso:
     gamma : float
         自适应权重指数
     init_method : str
-        初始估计方法，'corrected_ols' 或 'corrected_ridge'，默认为 'corrected_ols'
+        初始估计方法，'cocolasso'、'corrected_ols' 或 'corrected_ridge'，默认为 'cocolasso'
     ridge_alpha : float
         修正Ridge的正则化参数，仅当 init_method='corrected_ridge' 时使用
     max_iter_admm : int
@@ -32,7 +32,7 @@ class AdaptiveCoCoLasso:
         ADMM算法惩罚参数
     """
 
-    def __init__(self, alpha=1.0, Sigma_uu=None, gamma=1.0, init_method='corrected_ols',
+    def __init__(self, alpha=1.0, Sigma_uu=None, gamma=1.0, init_method='cocolasso',
                  ridge_alpha=1.0, max_iter_admm=1000, tol_admm=1e-4, rho=1.0):
         self.alpha = alpha
         self.Sigma_uu = Sigma_uu
@@ -140,13 +140,21 @@ class AdaptiveCoCoLasso:
         W_std_safe = np.where(W_std > 1e-12, W_std, 1.0) ## 防止零方差特征导致缩放除零
         Sigma_uu_scaled = Sigma_uu / np.outer(W_std_safe, W_std_safe)
 
-        if self.init_method == 'corrected_ols':
-            init_model = CorrectedOLS(Sigma_uu=Sigma_uu)
+        if self.init_method == 'cocolasso':
+            init_model = CoCoLasso(
+                alpha=self.alpha,
+                Sigma_uu=Sigma_uu,
+                max_iter_admm=self.max_iter_admm,
+                tol_admm=self.tol_admm,
+                rho=self.rho,
+            )
+        elif self.init_method == 'corrected_ols':
+            init_model = COLS(Sigma_uu=Sigma_uu)
         elif self.init_method == 'corrected_ridge':
-            init_model = CorrectedRidge(alpha=self.ridge_alpha, Sigma_uu=Sigma_uu)
+            init_model = CRidge(alpha=self.ridge_alpha, Sigma_uu=Sigma_uu)
         else:
             raise ValueError(
-                "init_method must be 'corrected_ols' or 'corrected_ridge', "
+                "init_method must be 'cocolasso', 'corrected_ols' or 'corrected_ridge', "
                 f"got '{self.init_method}'"
             )
         self.init_method_used_ = self.init_method

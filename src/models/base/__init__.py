@@ -1,9 +1,9 @@
-from .Adaptive_Lasso import AdaptiveLasso
-from .Lasso import LassoRegression
+from .ALasso import ALasso
+from .Lasso import Lasso
 from .OLS import OLS
 
 __all__ = [
     'OLS',
-    'LassoRegression',
-    'AdaptiveLasso',
+    'Lasso',
+    'ALasso',
 ]

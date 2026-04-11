@@ -1,14 +1,14 @@
-from .adaptive import AdaptiveCoCoLasso, AdaptiveCorrectedLasso
-from .canonical import CoCoLasso, CorrectedLasso, CorrectedOLS, CorrectedRidge
-from .feature_weighted import RandomForestCorrectedLasso, XGBoostCorrectedLasso
+from .adaptive import ACoCoLasso, ACLasso
+from .canonical import CoCoLasso, CLasso, COLS, CRidge
+from .feature_weighted import RFACLasso, XGBoostACLasso
 
 __all__ = [
-    'CorrectedOLS',
-    'CorrectedRidge',
-    'CorrectedLasso',
+    'COLS',
+    'CRidge',
+    'CLasso',
     'CoCoLasso',
-    'AdaptiveCorrectedLasso',
-    'AdaptiveCoCoLasso',
-    'RandomForestCorrectedLasso',
-    'XGBoostCorrectedLasso',
+    'ACLasso',
+    'ACoCoLasso',
+    'RFACLasso',
+    'XGBoostACLasso',
 ]

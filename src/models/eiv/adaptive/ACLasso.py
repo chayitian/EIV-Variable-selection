@@ -1,10 +1,10 @@
 import numpy as np
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import Lasso
-from ..canonical import CorrectedOLS, CorrectedRidge
+from ..canonical import COLS, CRidge
 
 
-class AdaptiveCorrectedLasso:
+class ACLasso:
     """
     自适应修正Lasso回归（结合修正Lasso和自适应Lasso）
 
@@ -80,9 +80,9 @@ class AdaptiveCorrectedLasso:
         Sigma_uu_scaled = Sigma_uu / np.outer(W_std_safe, W_std_safe)
 
         if self.init_method == 'corrected_ols':
-            init_model = CorrectedOLS(Sigma_uu=Sigma_uu)
+            init_model = COLS(Sigma_uu=Sigma_uu)
         elif self.init_method == 'corrected_ridge':
-            init_model = CorrectedRidge(alpha=self.ridge_alpha, Sigma_uu=Sigma_uu)
+            init_model = CRidge(alpha=self.ridge_alpha, Sigma_uu=Sigma_uu)
         else:
             raise ValueError(
                 "init_method must be 'corrected_ols' or 'corrected_ridge', "

@@ -2,7 +2,7 @@ import numpy as np
 from sklearn.linear_model import LinearRegression, Ridge
 
 
-class AdaptiveLasso:
+class ALasso:
     """
     自适应Lasso回归（Adaptive Lasso）
 

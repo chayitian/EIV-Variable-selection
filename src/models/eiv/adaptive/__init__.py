@@ -1,7 +1,7 @@
-from .Adaptive_CoCoLasso import AdaptiveCoCoLasso
-from .Adaptive_Corrected_Lasso import AdaptiveCorrectedLasso
+from .ACoCoLasso import ACoCoLasso
+from .ACLasso import ACLasso
 
 __all__ = [
-    'AdaptiveCorrectedLasso',
-    'AdaptiveCoCoLasso',
+    'ACLasso',
+    'ACoCoLasso',
 ]

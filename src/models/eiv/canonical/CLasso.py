@@ -1,40 +1,42 @@
 import numpy as np
 from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import Lasso
 
 
-class CorrectedRidge:
+class CLasso:
     """
-    修正Ridge回归（处理测量误差的L2正则回归）
+    修正Lasso回归（处理测量误差的高维变量选择）
 
     目标函数：
-    (1 / (2n)) * ||y - Wβ||^2 - (1/2)β^TΣ_{uu}β + (alpha / 2)||β||_2^2
-
-    通过标准化后等价的二次型闭式解求解：
-    beta = (Sigma_corrected + alpha * I)^(-1) rho
+    (1 / (2n)) * ||y - Wβ||^2 - (1/2)β^TΣ_{uu}β + λ||β||_1
 
     参数
     ----------
     alpha : float
-        L2 正则化强度
+        L1 正则化强度
     Sigma_uu : np.ndarray
         测量误差协方差矩阵
-    min_eig : float
-        数值稳定化时的最小特征值下限
+    max_iter : int
+        最大迭代次数
+    tol : float
+        收敛阈值
     """
 
-    def __init__(self, alpha=1.0, Sigma_uu=None, min_eig=1e-4):
+    def __init__(self, alpha=1.0, Sigma_uu=None, max_iter=10000, tol=1e-6):
         self.alpha = alpha
         self.Sigma_uu = Sigma_uu
-        self.min_eig = min_eig
+        self.max_iter = max_iter
+        self.tol = tol
 
         self.coef_ = None
         self.intercept_ = None
         self.scaler_W_ = None
         self.scaler_y_ = None
+        self.Sigma_uu_scaled_ = None
 
     def fit(self, W, y):
         """
-        拟合修正Ridge
+        拟合修正Lasso（使用CVXPY求解或坐标下降法）
 
         参数
         ----------
@@ -69,16 +71,28 @@ class CorrectedRidge:
 
         Sigma_W = (W_scaled.T @ W_scaled) / n_samples
         Sigma_corrected = Sigma_W - Sigma_uu_scaled
-        Sigma_corrected = (Sigma_corrected + Sigma_corrected.T) / 2
 
-        current_min_eig = np.min(np.linalg.eigvalsh(Sigma_corrected))
-        if current_min_eig < self.min_eig:
-            Sigma_corrected += np.eye(n_features) * (self.min_eig - current_min_eig)
+        min_eig = np.min(np.linalg.eigvalsh(Sigma_corrected))
+        if min_eig < 1e-4:
+            Sigma_corrected += np.eye(n_features) * (1e-4 - min_eig)
+
+        try:
+            L = np.linalg.cholesky(Sigma_corrected)
+        except np.linalg.LinAlgError:
+            Sigma_corrected = (Sigma_corrected + Sigma_corrected.T) / 2
+            min_eig = np.min(np.linalg.eigvalsh(Sigma_corrected))
+            if min_eig < 1e-4:
+                Sigma_corrected += np.eye(n_features) * (1e-4 - min_eig)
+            L = np.linalg.cholesky(Sigma_corrected)
 
         rho = (W_scaled.T @ y_centered) / n_samples
 
-        ridge_system = Sigma_corrected + self.alpha * np.eye(n_features)
-        beta_scaled = np.linalg.solve(ridge_system, rho)
+        W_transformed = L.T * np.sqrt(n_samples)
+        y_transformed = np.linalg.solve(L, rho) * np.sqrt(n_samples)
+
+        lasso = Lasso(alpha=self.alpha, fit_intercept=False, max_iter=10000, tol=1e-6)
+        lasso.fit(W_transformed, y_transformed)
+        beta_scaled = lasso.coef_
 
         beta_original_scale = beta_scaled / W_std_safe
         beta_original_scale = np.where(W_std > 1e-12, beta_original_scale, 0.0) ## 零方差特征不可识别，回写为 0 提升稳定性

@@ -1,42 +1,30 @@
 import numpy as np
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Lasso
 
 
-class CorrectedLasso:
+class COLS:
     """
-    修正Lasso回归（处理测量误差的高维变量选择）
+    修正OLS回归（处理测量误差的最小二乘估计）
 
-    目标函数：
-    (1 / (2n)) * ||y - Wβ||^2 - (1/2)β^TΣ_{uu}β + λ||β||_1
+    用于获得自适应修正Lasso和自适应CoCoLasso的初始参数估计值
 
     参数
     ----------
-    alpha : float
-        L1 正则化强度
     Sigma_uu : np.ndarray
         测量误差协方差矩阵
-    max_iter : int
-        最大迭代次数
-    tol : float
-        收敛阈值
     """
 
-    def __init__(self, alpha=1.0, Sigma_uu=None, max_iter=10000, tol=1e-6):
-        self.alpha = alpha
+    def __init__(self, Sigma_uu=None):
         self.Sigma_uu = Sigma_uu
-        self.max_iter = max_iter
-        self.tol = tol
 
         self.coef_ = None
         self.intercept_ = None
         self.scaler_W_ = None
         self.scaler_y_ = None
-        self.Sigma_uu_scaled_ = None
 
     def fit(self, W, y):
         """
-        拟合修正Lasso（使用CVXPY求解或坐标下降法）
+        拟合修正OLS
 
         参数
         ----------
@@ -72,27 +60,14 @@ class CorrectedLasso:
         Sigma_W = (W_scaled.T @ W_scaled) / n_samples
         Sigma_corrected = Sigma_W - Sigma_uu_scaled
 
+        Sigma_corrected = (Sigma_corrected + Sigma_corrected.T) / 2
         min_eig = np.min(np.linalg.eigvalsh(Sigma_corrected))
         if min_eig < 1e-4:
             Sigma_corrected += np.eye(n_features) * (1e-4 - min_eig)
 
-        try:
-            L = np.linalg.cholesky(Sigma_corrected)
-        except np.linalg.LinAlgError:
-            Sigma_corrected = (Sigma_corrected + Sigma_corrected.T) / 2
-            min_eig = np.min(np.linalg.eigvalsh(Sigma_corrected))
-            if min_eig < 1e-4:
-                Sigma_corrected += np.eye(n_features) * (1e-4 - min_eig)
-            L = np.linalg.cholesky(Sigma_corrected)
-
         rho = (W_scaled.T @ y_centered) / n_samples
 
-        W_transformed = L.T * np.sqrt(n_samples)
-        y_transformed = np.linalg.solve(L, rho) * np.sqrt(n_samples)
-
-        lasso = Lasso(alpha=self.alpha, fit_intercept=False, max_iter=10000, tol=1e-6)
-        lasso.fit(W_transformed, y_transformed)
-        beta_scaled = lasso.coef_
+        beta_scaled = np.linalg.solve(Sigma_corrected, rho)
 
         beta_original_scale = beta_scaled / W_std_safe
         beta_original_scale = np.where(W_std > 1e-12, beta_original_scale, 0.0) ## 零方差特征不可识别，回写为 0 提升稳定性

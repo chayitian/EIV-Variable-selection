@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class LassoRegression:
+class Lasso:
     """
     Lasso 回归（坐标下降法实现）
 

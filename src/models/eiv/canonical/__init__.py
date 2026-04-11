@@ -1,11 +1,11 @@
 from .CoCoLasso import CoCoLasso
-from .Corrected_Lasso import CorrectedLasso
-from .Corrected_OLS import CorrectedOLS
-from .Corrected_Ridge import CorrectedRidge
+from .CLasso import CLasso
+from .COLS import COLS
+from .CRidge import CRidge
 
 __all__ = [
-    'CorrectedOLS',
-    'CorrectedRidge',
-    'CorrectedLasso',
+    'COLS',
+    'CRidge',
+    'CLasso',
     'CoCoLasso',
 ]

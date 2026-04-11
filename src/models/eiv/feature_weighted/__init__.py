@@ -1,7 +1,7 @@
-from .RandomForest_Corrected_Lasso import RandomForestCorrectedLasso
-from .XGBoost_Corrected_Lasso import XGBoostCorrectedLasso
+from .RFACLasso import RFACLasso
+from .XGBoostACLasso import XGBoostACLasso
 
 __all__ = [
-    'RandomForestCorrectedLasso',
-    'XGBoostCorrectedLasso',
+    'RFACLasso',
+    'XGBoostACLasso',
 ]
