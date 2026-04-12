@@ -1,5 +1,4 @@
 import numpy as np
-from sklearn.linear_model import Lasso, LinearRegression, Ridge
 
 
 class ALasso:
@@ -17,34 +16,29 @@ class ALasso:
 
     参数
     ----------
-    final_l1_alpha : float
+    alpha : float
         最终加权Lasso阶段的 L1 正则化参数 λ
-    init_l1_alpha : float
-        初始估计阶段（当 init_method='lasso'）的 L1 正则化参数
-    init_l2_alpha : float
-        初始估计阶段（当 init_method='ridge'）的 L2 正则化参数
     gamma : float
         权重指数参数，默认为1.0
     max_iter : int
         坐标下降法最大迭代次数
     tol : float
         收敛阈值
-    init_method : str
-        初始估计方法，'ols'、'ridge' 或 'lasso'，默认为 'ols'
+    init_coef : np.ndarray or None
+        外部传入的初始估计系数向量，长度应为 n_features。
+        按 1/(|init_coef|+epsilon)^gamma 计算权重。
     epsilon : float
         避免除零的小常数
     """
 
-    def __init__(self, final_l1_alpha=1.0, init_l1_alpha=1.0, init_l2_alpha=1.0,
-                 gamma=1.0, max_iter=1000, tol=1e-4, init_method='ols', epsilon=1e-6):
-        self.final_l1_alpha = final_l1_alpha
-        self.init_l1_alpha = init_l1_alpha
-        self.init_l2_alpha = init_l2_alpha
+    def __init__(self, alpha=1.0, gamma=1.0, max_iter=1000, tol=1e-4, epsilon=1e-6,
+                 init_coef=None):
+        self.alpha = alpha
         self.gamma = gamma
         self.max_iter = max_iter
         self.tol = tol
-        self.init_method = init_method
         self.epsilon = epsilon
+        self.init_coef = init_coef
 
         self.coef_ = None
         self.intercept_ = None
@@ -76,18 +70,14 @@ class ALasso:
         """
         n_samples, n_features = X.shape
 
-        if self.init_method == 'ols':
-            init_model = LinearRegression(fit_intercept=True)
-        elif self.init_method == 'ridge':
-            init_model = Ridge(alpha=self.init_l2_alpha, fit_intercept=True)
-        elif self.init_method == 'lasso':
-            init_model = Lasso(alpha=self.init_l1_alpha, fit_intercept=True, max_iter=self.max_iter, tol=self.tol)
-        else:
-            raise ValueError(f"init_method must be 'ols', 'ridge' or 'lasso', got '{self.init_method}'")
-
-        init_model.fit(X, y)
-        self.init_coef_ = init_model.coef_.copy()
-
+        if self.init_coef is None:
+            raise ValueError("ALasso requires externally provided init_coef.")
+        init_coef = np.asarray(self.init_coef, dtype=float).reshape(-1)
+        if init_coef.size != n_features:
+            raise ValueError(f"init_coef length must be {n_features}, got {init_coef.size}")
+        if not np.all(np.isfinite(init_coef)):
+            raise ValueError("init_coef must contain only finite values")
+        self.init_coef_ = init_coef.copy()
         self.weights_ = 1.0 / (np.abs(self.init_coef_) + self.epsilon) ** self.gamma
 
         X_mean = np.mean(X, axis=0)
@@ -111,7 +101,7 @@ class ALasso:
                 z_j = np.sum(X_weighted[:, j] ** 2) / n_samples
 
                 z_j_safe = max(z_j, 1e-12) ## 防止加权后近零方差列导致除零
-                beta_weighted[j] = self._soft_threshold(rho_j, self.final_l1_alpha) / z_j_safe
+                beta_weighted[j] = self._soft_threshold(rho_j, self.alpha) / z_j_safe
 
             if np.max(np.abs(beta_weighted - beta_old)) < self.tol:
                 break

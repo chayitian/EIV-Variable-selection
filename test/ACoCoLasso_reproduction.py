@@ -2,7 +2,6 @@ import csv
 import os
 import sys
 import warnings
-from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -13,7 +12,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.evaluation import selection_accuracy
 from src.models.eiv.adaptive import ACLasso, ACoCoLasso
-from src.models.eiv.canonical import CLasso, CoCoLasso
+from src.models.eiv.canonical import CLasso, CoCoLasso, COLS
 
 warnings.filterwarnings('ignore', category=ConvergenceWarning)
 
@@ -38,19 +37,23 @@ def generate_dataset(n, p, beta_true, sigma, tau, sigma_x, rng):
     return x_true, w, y, sigma_uu
 
 
-def build_model(method_name, alpha, sigma_uu):
+def build_model(method_name, alpha, sigma_uu, init_coef=None):
     if method_name == 'CLasso':
         return CLasso(alpha=alpha, Sigma_uu=sigma_uu)
     if method_name == 'ACLasso':
-        return ACLasso(final_l1_alpha=alpha, init_l1_alpha=alpha, Sigma_uu=sigma_uu)
+        if init_coef is None:
+            raise ValueError('ACLasso requires init_coef')
+        return ACLasso(alpha=alpha, Sigma_uu=sigma_uu, init_coef=init_coef)
     if method_name == 'CoCoLasso':
         return CoCoLasso(alpha=alpha, Sigma_uu=sigma_uu)
     if method_name == 'ACoCoLasso':
-        return ACoCoLasso(final_l1_alpha=alpha, init_l1_alpha=alpha, Sigma_uu=sigma_uu)
+        if init_coef is None:
+            raise ValueError('ACoCoLasso requires init_coef')
+        return ACoCoLasso(alpha=alpha, Sigma_uu=sigma_uu, init_coef=init_coef)
     raise ValueError(f'Unknown method: {method_name}')
 
 
-def select_alpha_with_cv(method_name, w, y, sigma_uu, alpha_grid, cv_folds=10, seed=0):
+def select_alpha_with_cv(method_name, w, y, sigma_uu, alpha_grid, cv_folds=10, seed=0, init_coef=None):
     kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
     mean_losses = []
 
@@ -60,7 +63,7 @@ def select_alpha_with_cv(method_name, w, y, sigma_uu, alpha_grid, cv_folds=10, s
             w_train, w_val = w[train_idx], w[val_idx]
             y_train, y_val = y[train_idx], y[val_idx]
 
-            model = build_model(method_name, alpha, sigma_uu)
+            model = build_model(method_name, alpha, sigma_uu, init_coef=init_coef)
             try:
                 model.fit(w_train, y_train)
                 y_pred = model.predict(w_val)
@@ -73,6 +76,31 @@ def select_alpha_with_cv(method_name, w, y, sigma_uu, alpha_grid, cv_folds=10, s
 
     best_idx = int(np.argmin(mean_losses))
     return float(alpha_grid[best_idx]), float(mean_losses[best_idx])
+
+
+def fit_init_model_and_get_coef(method_name, w, y, sigma_uu, alpha_grid, cv_folds, seed):
+    if method_name == 'ACLasso':
+        # 按你的要求：ACLasso 先用 COLS 得到初始系数
+        init_model = COLS(Sigma_uu=sigma_uu)
+        init_model.fit(w, y)
+        return init_model.coef_.copy(), None, None
+
+    if method_name == 'ACoCoLasso':
+        # 按你的要求：ACoCoLasso 先用 CoCoLasso（CV优选alpha）得到初始系数
+        init_alpha, init_cv_loss = select_alpha_with_cv(
+            method_name='CoCoLasso',
+            w=w,
+            y=y,
+            sigma_uu=sigma_uu,
+            alpha_grid=alpha_grid,
+            cv_folds=cv_folds,
+            seed=seed,
+        )
+        init_model = CoCoLasso(alpha=init_alpha, Sigma_uu=sigma_uu)
+        init_model.fit(w, y)
+        return init_model.coef_.copy(), init_alpha, init_cv_loss
+
+    return None, None, None
 
 
 def summarize_metric(values):
@@ -115,11 +143,6 @@ def build_measure_table_rows(taus, method_columns, summary_store):
 
 
 def main():
-    n = 100
-    p = 250
-    sigma = 3.0
-    taus = [0.75, 1.25]
-    n_simulations = 100
     cv_folds = 10
     alpha_grid = np.logspace(-2, 0.6, 10)
     selection_threshold = 1e-6
@@ -130,18 +153,36 @@ def main():
         'CoCoLasso',
         'ACoCoLasso',
     ]
-    structures = [
-        ('ar', 'AR_0.5'),
-        ('cs', 'Compound_Symmetry'),
+    experiments = [
+        {
+            'name': 'high_dim',
+            'display_name': 'Experiment 1 (n=100, p=250)',
+            'n': 100,
+            'p': 250,
+            'sigma': 3.0,
+            'taus': [0.75, 1.25],
+            'n_simulations': 100,
+            'structures': [
+                ('ar', 'AR_0.5'),
+                ('cs', 'Compound_Symmetry'),
+            ],
+            'beta_nonzero': [3.0, 1.5, 2.0],
+        },
+        {
+            'name': 'ultra_high_dim',
+            'display_name': 'Experiment 2 (n=80, p=1000)',
+            'n': 80,
+            'p': 1000,
+            'sigma': 1.0,
+            'taus': [0.25, 0.5],
+            'n_simulations': 100,
+            'structures': [
+                ('ar', 'AR_0.5'),
+            ],
+            'beta_nonzero': [1.0, -0.5, 0.7, -1.2, -0.9, 0.3, 0.55],
+        },
     ]
 
-    beta_true = np.zeros(p)
-    beta_true[0] = 3.0
-    beta_true[1] = 1.5
-    beta_true[2] = 2.0
-    true_indices = [0, 1, 2]
-
-    ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     project_root = Path(__file__).resolve().parents[1]
     output_dir = project_root / 'results'
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -151,102 +192,157 @@ def main():
     print(f'Output directory: {output_dir}')
     print('=' * 90)
 
-    for struct_idx, (struct_key, struct_label) in enumerate(structures):
-        sigma_x = build_covariance_matrix(p, struct_key)
-        summary_store = {}
+    for exp_idx, exp in enumerate(experiments):
+        n = exp['n']
+        p = exp['p']
+        sigma = exp['sigma']
+        taus = exp['taus']
+        n_simulations = exp['n_simulations']
+        structures = exp['structures']
 
-        print('\n' + '-' * 90)
-        print(f'Covariance structure: {struct_label}')
-        print('-' * 90)
+        beta_true = np.zeros(p)
+        for idx, coef in enumerate(exp['beta_nonzero']):
+            beta_true[idx] = coef
+        true_indices = list(range(len(exp['beta_nonzero'])))
 
-        for tau_idx, tau in enumerate(taus):
-            for method_idx, method in enumerate(methods):
-                cv_seed = 1000 + struct_idx * 100 + tau_idx * 10 + method_idx
-                rng_cv = np.random.default_rng(cv_seed)
-                _, w_cv, y_cv, sigma_uu_cv = generate_dataset(
-                    n=n,
-                    p=p,
-                    beta_true=beta_true,
-                    sigma=sigma,
-                    tau=tau,
-                    sigma_x=sigma_x,
-                    rng=rng_cv,
-                )
+        print('\n' + '=' * 90)
+        print(f"{exp['display_name']} started")
+        print('=' * 90)
 
-                best_alpha, cv_loss = select_alpha_with_cv(
-                    method_name=method,
-                    w=w_cv,
-                    y=y_cv,
-                    sigma_uu=sigma_uu_cv,
-                    alpha_grid=alpha_grid,
-                    cv_folds=cv_folds,
-                    seed=cv_seed,
-                )
+        for struct_idx, (struct_key, struct_label) in enumerate(structures):
+            sigma_x = build_covariance_matrix(p, struct_key)
+            summary_store = {}
 
-                tp_vals = []
-                fp_vals = []
-                mse_vals = []
-                pe_vals = []
+            print('\n' + '-' * 90)
+            print(f'Covariance structure: {struct_label}')
+            print('-' * 90)
 
-                print(
-                    f'Running method={method}, tau={tau}, '
-                    f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
-                )
-                for sim in range(n_simulations):
-                    sim_seed = (
-                        10_000
-                        + struct_idx * 10_000_000
-                        + tau_idx * 1_000_000
-                        + method_idx * 100_000
-                        + sim
-                    )
-                    rng = np.random.default_rng(sim_seed)
-
-                    x_true, w, y, sigma_uu = generate_dataset(
+            for tau_idx, tau in enumerate(taus):
+                for method_idx, method in enumerate(methods):
+                    cv_seed = 1000 + exp_idx * 1_000_000 + struct_idx * 100 + tau_idx * 10 + method_idx
+                    rng_cv = np.random.default_rng(cv_seed)
+                    _, w_cv, y_cv, sigma_uu_cv = generate_dataset(
                         n=n,
                         p=p,
                         beta_true=beta_true,
                         sigma=sigma,
                         tau=tau,
                         sigma_x=sigma_x,
-                        rng=rng,
+                        rng=rng_cv,
                     )
 
-                    model = build_model(method, best_alpha, sigma_uu)
-                    try:
-                        model.fit(w, y)
-                        selected = np.where(np.abs(model.coef_) > selection_threshold)[0].tolist()
-
-                        metrics = selection_accuracy(
-                            true_indices=true_indices,
-                            selected_indices=selected,
-                            total_features=p,
-                            beta_true=beta_true,
-                            beta_hat=model.coef_,
-                            x_true=x_true,
+                    init_coef_cv = None
+                    init_alpha = None
+                    init_cv_loss = None
+                    if method in ('ACLasso', 'ACoCoLasso'):
+                        init_coef_cv, init_alpha, init_cv_loss = fit_init_model_and_get_coef(
+                            method_name=method,
+                            w=w_cv,
+                            y=y_cv,
+                            sigma_uu=sigma_uu_cv,
+                            alpha_grid=alpha_grid,
+                            cv_folds=cv_folds,
+                            seed=cv_seed,
                         )
 
-                        tp_vals.append(float(metrics['TP']))
-                        fp_vals.append(float(metrics['FP']))
-                        mse_vals.append(float(metrics['MSE']))
-                        pe_vals.append(float(metrics['PE']))
-                    except Exception:
-                        continue
+                    best_alpha, cv_loss = select_alpha_with_cv(
+                        method_name=method,
+                        w=w_cv,
+                        y=y_cv,
+                        sigma_uu=sigma_uu_cv,
+                        alpha_grid=alpha_grid,
+                        cv_folds=cv_folds,
+                        seed=cv_seed,
+                        init_coef=init_coef_cv,
+                    )
 
-                summary_store[(tau, method)] = {
-                    'TP': summarize_metric(tp_vals),
-                    'FP': summarize_metric(fp_vals),
-                    'MSE': summarize_metric(mse_vals),
-                    'PE': summarize_metric(pe_vals),
-                    'Best_Lambda': best_alpha,
-                    'CV_Loss': cv_loss,
-                }
+                    tp_vals = []
+                    fp_vals = []
+                    mse_vals = []
+                    pe_vals = []
 
-        headers = ['Tau', 'Measure'] + methods
-        rows = build_measure_table_rows(taus, methods, summary_store)
-        csv_path = output_dir / f'ACoCoLasso_reproduction_{struct_label}.csv'
-        write_csv(csv_path, headers, rows)
-        print(f'Saved table: {csv_path}')
+                    if method == 'ACLasso':
+                        print(
+                            f'Running method={method}, tau={tau}, init_model=COLS, '
+                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
+                        )
+                    elif method == 'ACoCoLasso':
+                        print(
+                            f'Running method={method}, tau={tau}, init_model=CoCoLasso, '
+                            f'init_alpha={init_alpha:.6f}, init_cv_loss={init_cv_loss:.6f}, '
+                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
+                        )
+                    else:
+                        print(
+                            f'Running method={method}, tau={tau}, '
+                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
+                        )
+                    for sim in range(n_simulations):
+                        sim_seed = (
+                            10_000
+                            + exp_idx * 100_000_000
+                            + struct_idx * 10_000_000
+                            + tau_idx * 1_000_000
+                            + method_idx * 100_000
+                            + sim
+                        )
+                        rng = np.random.default_rng(sim_seed)
+
+                        x_true, w, y, sigma_uu = generate_dataset(
+                            n=n,
+                            p=p,
+                            beta_true=beta_true,
+                            sigma=sigma,
+                            tau=tau,
+                            sigma_x=sigma_x,
+                            rng=rng,
+                        )
+
+                        try:
+                            init_coef_sim = None
+                            if method == 'ACLasso':
+                                init_model = COLS(Sigma_uu=sigma_uu)
+                                init_model.fit(w, y)
+                                init_coef_sim = init_model.coef_.copy()
+                            elif method == 'ACoCoLasso':
+                                init_model = CoCoLasso(alpha=init_alpha, Sigma_uu=sigma_uu)
+                                init_model.fit(w, y)
+                                init_coef_sim = init_model.coef_.copy()
+
+                            model = build_model(method, best_alpha, sigma_uu, init_coef=init_coef_sim)
+                            model.fit(w, y)
+                            selected = np.where(np.abs(model.coef_) > selection_threshold)[0].tolist()
+
+                            metrics = selection_accuracy(
+                                true_indices=true_indices,
+                                selected_indices=selected,
+                                total_features=p,
+                                beta_true=beta_true,
+                                beta_hat=model.coef_,
+                                x_true=x_true,
+                            )
+
+                            tp_vals.append(float(metrics['TP']))
+                            fp_vals.append(float(metrics['FP']))
+                            mse_vals.append(float(metrics['MSE']))
+                            pe_vals.append(float(metrics['PE']))
+                        except Exception:
+                            continue
+
+                    summary_store[(tau, method)] = {
+                        'TP': summarize_metric(tp_vals),
+                        'FP': summarize_metric(fp_vals),
+                        'MSE': summarize_metric(mse_vals),
+                        'PE': summarize_metric(pe_vals),
+                        'Best_Lambda': best_alpha,
+                        'CV_Loss': cv_loss,
+                    }
+
+            headers = ['Tau', 'Measure'] + methods
+            rows = build_measure_table_rows(taus, methods, summary_store)
+            csv_path = output_dir / f"ACoCoLasso_reproduction_{exp['name']}_{struct_label}.csv"
+            write_csv(csv_path, headers, rows)
+            print(f'Saved table: {csv_path}')
 
     print('\nAll done.')
 

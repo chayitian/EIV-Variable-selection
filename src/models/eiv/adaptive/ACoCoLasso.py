@@ -1,9 +1,7 @@
 import numpy as np
 import time
 from sklearn.preprocessing import StandardScaler
-from sklearn.linear_model import Lasso, LinearRegression, Ridge
-from ..canonical import CoCoLasso, COLS, CRidge
-from ...base import ALasso
+from sklearn.linear_model import Lasso
 
 
 class ACoCoLasso:
@@ -15,24 +13,15 @@ class ACoCoLasso:
 
     参数
     ----------
-    final_l1_alpha : float
+    alpha : float
         最终加权Lasso阶段的 L1 正则化强度
-    init_l1_alpha : float
-        初始估计阶段（cocolasso/lasso/alasso）的 L1 正则化强度
-    init_l2_alpha : float
-        初始估计阶段（cridge/ridge）的 L2 正则化强度
     Sigma_uu : np.ndarray
         测量误差协方差矩阵
     gamma : float
         自适应权重指数
-    adaptive_weights : np.ndarray or None
-        外部传入的自适应权重向量，长度应为 n_features。
-        若为 None，则按 init_method 在模型内部计算权重。
-    init_method : str
-        初始估计方法，支持：
-        'cocolasso'、'cols'、'cridge'（修正初始化）
-        'ols'、'ridge'、'lasso'、'alasso'（朴素初始化，直接用观测自变量 W）
-        默认为 'cocolasso'
+    init_coef : np.ndarray or None
+        外部传入的初始估计系数向量，长度应为 n_features。
+        按 1/(|init_coef_scaled|+1e-8)^gamma 计算权重。
     max_iter_admm : int
         ADMM算法最大迭代次数
     tol_admm : float
@@ -41,16 +30,12 @@ class ACoCoLasso:
         ADMM算法惩罚参数
     """
 
-    def __init__(self, final_l1_alpha=1.0, init_l1_alpha=1.0, init_l2_alpha=1.0,
-                 Sigma_uu=None, gamma=1.0, init_method='cocolasso',
-                 max_iter_admm=1000, tol_admm=1e-4, rho=1.0, adaptive_weights=None):
-        self.final_l1_alpha = final_l1_alpha
-        self.init_l1_alpha = init_l1_alpha
-        self.init_l2_alpha = init_l2_alpha
+    def __init__(self, alpha=1.0, Sigma_uu=None, gamma=1.0,
+                 max_iter_admm=1000, tol_admm=1e-4, rho=1.0, init_coef=None):
+        self.alpha = alpha
         self.Sigma_uu = Sigma_uu
         self.gamma = gamma
-        self.adaptive_weights = adaptive_weights
-        self.init_method = init_method
+        self.init_coef = init_coef
         self.max_iter_admm = max_iter_admm
         self.tol_admm = tol_admm
         self.rho = rho
@@ -152,74 +137,31 @@ class ACoCoLasso:
         W_std_safe = np.where(W_std > 1e-12, W_std, 1.0) ## 防止零方差特征导致缩放除零
         Sigma_uu_scaled = Sigma_uu / np.outer(W_std_safe, W_std_safe)
 
-        if self.adaptive_weights is not None:
-            ## 外部权重优先：由调用方负责完成重要性映射/归一化
-            weights = np.asarray(self.adaptive_weights, dtype=float).reshape(-1)
-            if weights.size != n_features:
-                raise ValueError(
-                    f"adaptive_weights length must be {n_features}, got {weights.size}"
-                )
-            if not np.all(np.isfinite(weights)):
-                raise ValueError("adaptive_weights must contain only finite values")
-            if np.any(weights <= 0):
-                raise ValueError("adaptive_weights must be strictly positive")
-            self.beta_init_ = None
-            self.init_method_used_ = 'external_weights'
-        else:
-            init_method = str(self.init_method).lower()
-
-            if init_method == 'cocolasso':
-                init_model = CoCoLasso(
-                    alpha=self.init_l1_alpha,
-                    Sigma_uu=Sigma_uu,
-                    max_iter_admm=self.max_iter_admm,
-                    tol_admm=self.tol_admm,
-                    rho=self.rho,
-                )
-            elif init_method == 'cols':
-                init_model = COLS(Sigma_uu=Sigma_uu)
-            elif init_method == 'cridge':
-                init_model = CRidge(alpha=self.init_l2_alpha, Sigma_uu=Sigma_uu)
-            elif init_method == 'ols':
-                init_model = LinearRegression(fit_intercept=True)
-            elif init_method == 'ridge':
-                init_model = Ridge(alpha=self.init_l2_alpha, fit_intercept=True)
-            elif init_method == 'lasso':
-                init_model = Lasso(alpha=self.init_l1_alpha, fit_intercept=True, max_iter=10000, tol=1e-6)
-            elif init_method == 'alasso':
-                init_model = ALasso(
-                    final_l1_alpha=self.init_l1_alpha,
-                    init_l1_alpha=self.init_l1_alpha,
-                    init_l2_alpha=self.init_l2_alpha,
-                    gamma=self.gamma,
-                    max_iter=10000,
-                    tol=1e-6,
-                    init_method='ols',
-                )
-            else:
-                raise ValueError(
-                    "init_method must be one of 'cocolasso', 'cols', 'cridge', 'ols', 'ridge', 'lasso', 'alasso' "
-                    f"got '{self.init_method}'"
-                )
-            self.init_method_used_ = init_method
-
-            init_model.fit(W, y)
-            self.beta_init_ = init_model.coef_.copy()
-
-            beta_init_scaled = self.beta_init_ * W_std
-            weights = 1.0 / (np.abs(beta_init_scaled) + 1e-8) ** self.gamma
+        if self.init_coef is None:
+            raise ValueError("ACoCoLasso requires externally provided init_coef.")
+        self.beta_init_ = np.asarray(self.init_coef, dtype=float).reshape(-1)
+        if self.beta_init_.size != n_features:
+            raise ValueError(
+                f"init_coef length must be {n_features}, got {self.beta_init_.size}"
+            )
+        if not np.all(np.isfinite(self.beta_init_)):
+            raise ValueError("init_coef must contain only finite values")
+        self.init_method_used_ = 'external_init_coef'
+        beta_init_scaled = self.beta_init_ * W_std
+        weights = 1.0 / (np.abs(beta_init_scaled) + 1e-8) ** self.gamma
 
         self.weights_ = weights.copy()
 
-        W_diag = np.diag(weights)
+        inv_weights = 1.0 / weights
+        W_inv_diag = np.diag(inv_weights)
 
         Sigma_hat = (W_scaled.T @ W_scaled) / n_samples - Sigma_uu_scaled
         rho_hat = (W_scaled.T @ y_centered) / n_samples
 
         Sigma_tilde = self._project_psd(Sigma_hat)
 
-        Sigma_transformed = W_diag.T @ Sigma_tilde @ W_diag
-        rho_transformed = W_diag.T @ rho_hat
+        Sigma_transformed = W_inv_diag.T @ Sigma_tilde @ W_inv_diag
+        rho_transformed = W_inv_diag.T @ rho_hat
 
         Sigma_transformed = (Sigma_transformed + Sigma_transformed.T) / 2
         min_eig = np.min(np.linalg.eigvalsh(Sigma_transformed))
@@ -244,11 +186,11 @@ class ACoCoLasso:
         W_tilde = L.T * np.sqrt(n_samples)
         y_tilde = np.linalg.solve(L, rho_transformed) * np.sqrt(n_samples)
 
-        lasso = Lasso(alpha=self.final_l1_alpha, fit_intercept=False, max_iter=10000, tol=1e-6)
+        lasso = Lasso(alpha=self.alpha, fit_intercept=False, max_iter=10000, tol=1e-6)
         lasso.fit(W_tilde, y_tilde)
         alpha_scaled = lasso.coef_
 
-        beta_scaled = W_diag @ alpha_scaled
+        beta_scaled = W_inv_diag @ alpha_scaled
         beta_original_scale = beta_scaled / W_std_safe
         beta_original_scale = np.where(W_std > 1e-12, beta_original_scale, 0.0) ## 零方差特征不可识别，回写为 0 提升稳定性
         self.coef_ = beta_original_scale

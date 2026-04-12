@@ -49,8 +49,7 @@ def build_model_builders(weight_method):
         'Corrected Lasso': lambda alpha, sigma_uu: CLasso(alpha=alpha, Sigma_uu=sigma_uu),
         'CoCoLasso': lambda alpha, sigma_uu: CoCoLasso(alpha=alpha, Sigma_uu=sigma_uu),
         'Adaptive Corrected Lasso': lambda alpha, sigma_uu: ACLasso(
-            final_l1_alpha=alpha,
-            init_l1_alpha=alpha,
+            alpha=alpha,
             Sigma_uu=sigma_uu,
         ),
         'XGBoost Corrected Lasso': lambda alpha, sigma_uu: XGBoostACLasso(
