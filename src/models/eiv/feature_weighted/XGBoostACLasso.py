@@ -7,7 +7,7 @@ import xgboost as xgb
 
 class XGBoostACLasso:
     """
-    XGBoost自适应修正Lasso回归（结合自适应修正Lasso和XGBoost特征重要性）
+    XGBoost自适应修正Lasso回归（XGBoostACLasso，结合ACLasso和XGBoost特征重要性）
 
     使用XGBoost的特征重要性作为自适应权重，替换传统的基于系数估计的权重。
 
@@ -98,7 +98,7 @@ class XGBoostACLasso:
 
     def fit(self, W, y):
         """
-        拟合XGBoost修正Lasso
+        拟合XGBoostACLasso
 
         参数
         ----------

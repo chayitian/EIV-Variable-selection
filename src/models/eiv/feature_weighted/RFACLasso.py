@@ -7,7 +7,7 @@ from sklearn.ensemble import RandomForestRegressor
 
 class RFACLasso:
     """
-    随机森林自适应修正Lasso回归（结合自适应修正Lasso和随机森林特征重要性）
+    随机森林自适应修正Lasso回归（RFACLasso，结合ACLasso和随机森林特征重要性）
 
     使用随机森林的特征重要性作为自适应权重，替换传统的基于系数估计的权重。
 
@@ -78,7 +78,7 @@ class RFACLasso:
 
     def fit(self, W, y):
         """
-        拟合随机森林修正Lasso
+        拟合RFACLasso
 
         参数
         ----------

@@ -18,7 +18,6 @@ from .experiments import (
     monte_carlo_evaluation,
     run_parameter_test,
     plot_comparison,
-    flatten_results_to_excel,
 )
 
 __all__ = [
@@ -39,5 +38,4 @@ __all__ = [
     'monte_carlo_evaluation',
     'run_parameter_test',
     'plot_comparison',
-    'flatten_results_to_excel',
 ]

@@ -68,7 +68,6 @@ src/
 	experiments/
 		__init__.py
 		comparison_common.py
-		results_flatten.py
 	models/
 		__init__.py
 		base/
@@ -287,7 +286,6 @@ from src import (
 	RandomForestCorrectedLasso,
 	XGBoostCorrectedLasso,
 	selection_accuracy,
-	flatten_results_to_excel,
 )
 ```
 
@@ -300,7 +298,6 @@ from src import (
 	monte_carlo_evaluation,
 	run_parameter_test,
 	plot_comparison,
-	flatten_results_to_excel,
 )
 ```
 
@@ -345,42 +342,6 @@ python test/comparison_with_xgboost.py --n_simulations 50 --selection_threshold 
 .\venv\Scripts\python.exe .\test\comparison_with_randomforest.py --n_simulations 50 --selection_threshold 1e-5 --weight_method normalized
 .\venv\Scripts\python.exe .\test\comparison_with_xgboost.py --n_simulations 50 --selection_threshold 1e-5 --weight_method normalized
 ```
-
-### 8.3 多次实验结果拍平与汇总导出
-
-支持将 `results` 目录及其子目录中的 `all_results_*.pkl` 递归读取并汇总：
-
-- 输出一个 xlsx 文件，包含 5 个 sheet：
-	- `long_table`：全量长表
-	- `alpha`、`p`、`n`、`sigma_u`：按参数维度拆分
-- 可选同时导出一份长表 csv（csv 仅单表）
-
-运行示例（默认输入目录为 `results`）：
-
-```bash
-python -m src.experiments.results_flatten
-```
-
-指定输入与输出：
-
-```bash
-python -m src.experiments.results_flatten --input_root results --output_xlsx results/flattened/all_runs_summary.xlsx --with_csv
-```
-
-Windows + venv 示例：
-
-```bash
-.\venv\Scripts\python.exe -m src.experiments.results_flatten --input_root results --output_xlsx results\flattened\all_runs_summary.xlsx --with_csv
-```
-
-参数说明：
-
-- `--input_root`：输入目录（递归查找 pkl）
-- `--pattern`：查找模式，默认 `all_results_*.pkl`
-- `--output_xlsx`：输出 xlsx 路径（不指定则默认输出到 `results/flattened/`）
-- `--with_csv`：同时导出长表 csv
-
----
 
 ## 9. 数值稳定性与实现约定
 

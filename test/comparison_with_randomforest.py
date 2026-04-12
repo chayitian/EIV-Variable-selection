@@ -42,7 +42,11 @@ def build_model_builders(weight_method):
         'Naive Lasso': lambda alpha, sigma_uu: Lasso(alpha=alpha),
         'Corrected Lasso': lambda alpha, sigma_uu: CLasso(alpha=alpha, Sigma_uu=sigma_uu),
         'CoCoLasso': lambda alpha, sigma_uu: CoCoLasso(alpha=alpha, Sigma_uu=sigma_uu),
-        'Adaptive Corrected Lasso': lambda alpha, sigma_uu: ACLasso(alpha=alpha, Sigma_uu=sigma_uu),
+        'Adaptive Corrected Lasso': lambda alpha, sigma_uu: ACLasso(
+            final_l1_alpha=alpha,
+            init_l1_alpha=alpha,
+            Sigma_uu=sigma_uu,
+        ),
         'RandomForest Corrected Lasso': lambda alpha, sigma_uu: RFACLasso(
             alpha=alpha,
             Sigma_uu=sigma_uu,

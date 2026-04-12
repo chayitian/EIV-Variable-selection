@@ -12,9 +12,8 @@ from sklearn.model_selection import KFold
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
 from src.evaluation import selection_accuracy
-from src.models.eiv.adaptive import ACoCoLasso
-from src.models.eiv.canonical import CoCoLasso
-from src.models.eiv.feature_weighted import RFACLasso, XGBoostACLasso
+from src.models.eiv.adaptive import ACLasso, ACoCoLasso
+from src.models.eiv.canonical import CLasso, CoCoLasso
 
 warnings.filterwarnings('ignore', category=ConvergenceWarning)
 
@@ -40,14 +39,14 @@ def generate_dataset(n, p, beta_true, sigma, tau, sigma_x, rng):
 
 
 def build_model(method_name, alpha, sigma_uu):
+    if method_name == 'CLasso':
+        return CLasso(alpha=alpha, Sigma_uu=sigma_uu)
+    if method_name == 'ACLasso':
+        return ACLasso(final_l1_alpha=alpha, init_l1_alpha=alpha, Sigma_uu=sigma_uu)
     if method_name == 'CoCoLasso':
         return CoCoLasso(alpha=alpha, Sigma_uu=sigma_uu)
     if method_name == 'ACoCoLasso':
-        return ACoCoLasso(alpha=alpha, Sigma_uu=sigma_uu)
-    if method_name == 'RFACLasso':
-        return RFACLasso(alpha=alpha, Sigma_uu=sigma_uu)
-    if method_name == 'XGBoostACLasso':
-        return XGBoostACLasso(alpha=alpha, Sigma_uu=sigma_uu)
+        return ACoCoLasso(final_l1_alpha=alpha, init_l1_alpha=alpha, Sigma_uu=sigma_uu)
     raise ValueError(f'Unknown method: {method_name}')
 
 
@@ -126,10 +125,10 @@ def main():
     selection_threshold = 1e-6
 
     methods = [
-        'ACoCoLasso',
+        'CLasso',
+        'ACLasso',
         'CoCoLasso',
-        'RFACLasso',
-        'XGBoostACLasso',
+        'ACoCoLasso',
     ]
     structures = [
         ('ar', 'AR_0.5'),
@@ -144,7 +143,7 @@ def main():
 
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     project_root = Path(__file__).resolve().parents[1]
-    output_dir = project_root / 'results' / f'ACoCoLasso_reproduction_{ts}'
+    output_dir = project_root / 'results'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print('=' * 90)

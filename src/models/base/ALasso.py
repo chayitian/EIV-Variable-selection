@@ -1,5 +1,5 @@
 import numpy as np
-from sklearn.linear_model import LinearRegression, Ridge
+from sklearn.linear_model import Lasso, LinearRegression, Ridge
 
 
 class ALasso:
@@ -17,8 +17,12 @@ class ALasso:
 
     参数
     ----------
-    alpha : float
-        正则化参数 λ
+    final_l1_alpha : float
+        最终加权Lasso阶段的 L1 正则化参数 λ
+    init_l1_alpha : float
+        初始估计阶段（当 init_method='lasso'）的 L1 正则化参数
+    init_l2_alpha : float
+        初始估计阶段（当 init_method='ridge'）的 L2 正则化参数
     gamma : float
         权重指数参数，默认为1.0
     max_iter : int
@@ -26,20 +30,20 @@ class ALasso:
     tol : float
         收敛阈值
     init_method : str
-        初始估计方法，'ols' 或 'ridge'，默认为 'ols'
-    ridge_alpha : float
-        Ridge正则化参数，仅当 init_method='ridge' 时使用
+        初始估计方法，'ols'、'ridge' 或 'lasso'，默认为 'ols'
     epsilon : float
         避免除零的小常数
     """
 
-    def __init__(self, alpha=1.0, gamma=1.0, max_iter=1000, tol=1e-4, init_method='ols', ridge_alpha=1.0, epsilon=1e-6):
-        self.alpha = alpha
+    def __init__(self, final_l1_alpha=1.0, init_l1_alpha=1.0, init_l2_alpha=1.0,
+                 gamma=1.0, max_iter=1000, tol=1e-4, init_method='ols', epsilon=1e-6):
+        self.final_l1_alpha = final_l1_alpha
+        self.init_l1_alpha = init_l1_alpha
+        self.init_l2_alpha = init_l2_alpha
         self.gamma = gamma
         self.max_iter = max_iter
         self.tol = tol
         self.init_method = init_method
-        self.ridge_alpha = ridge_alpha
         self.epsilon = epsilon
 
         self.coef_ = None
@@ -75,9 +79,11 @@ class ALasso:
         if self.init_method == 'ols':
             init_model = LinearRegression(fit_intercept=True)
         elif self.init_method == 'ridge':
-            init_model = Ridge(alpha=self.ridge_alpha, fit_intercept=True)
+            init_model = Ridge(alpha=self.init_l2_alpha, fit_intercept=True)
+        elif self.init_method == 'lasso':
+            init_model = Lasso(alpha=self.init_l1_alpha, fit_intercept=True, max_iter=self.max_iter, tol=self.tol)
         else:
-            raise ValueError(f"init_method must be 'ols' or 'ridge', got '{self.init_method}'")
+            raise ValueError(f"init_method must be 'ols', 'ridge' or 'lasso', got '{self.init_method}'")
 
         init_model.fit(X, y)
         self.init_coef_ = init_model.coef_.copy()
@@ -105,7 +111,7 @@ class ALasso:
                 z_j = np.sum(X_weighted[:, j] ** 2) / n_samples
 
                 z_j_safe = max(z_j, 1e-12) ## 防止加权后近零方差列导致除零
-                beta_weighted[j] = self._soft_threshold(rho_j, self.alpha) / z_j_safe
+                beta_weighted[j] = self._soft_threshold(rho_j, self.final_l1_alpha) / z_j_safe
 
             if np.max(np.abs(beta_weighted - beta_old)) < self.tol:
                 break
