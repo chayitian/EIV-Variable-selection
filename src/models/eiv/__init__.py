@@ -1,14 +1,12 @@
 from .adaptive import ACoCoLasso, ACLasso
-from .canonical import CoCoLasso, CLasso, COLS, CRidge
-from .feature_weighted import RFACLasso, XGBoostACLasso
+from .canonical import CoCoLasso, CoCoElasticNet, CLasso, COLS, CRidge
 
 __all__ = [
     'COLS',
     'CRidge',
     'CLasso',
     'CoCoLasso',
+    'CoCoElasticNet',
     'ACLasso',
     'ACoCoLasso',
-    'RFACLasso',
-    'XGBoostACLasso',
 ]
