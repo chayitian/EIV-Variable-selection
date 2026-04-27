@@ -1,13 +1,15 @@
 # EIV-Variable-selection
 
-高维测量误差变量选择研究与实验框架。
+高维测量误差变量选择研究与实验代码库。
 
-本仓库聚焦两类回归场景：
+本仓库当前围绕 Error-in-Variables (EIV) 线性回归，统一实现了：
 
-1. 无测量误差的标准线性回归（用于方法基线与理论对照）
-2. 带加性测量误差的高维线性回归（项目主问题）
+1. 基础回归模型（无测量误差）
+2. EIV 经典修正模型
+3. EIV 自适应模型
+4. 基于 SHAP/树重要性的加权实验策略
 
-项目已将基础模型、EIV 经典修正模型、自适应改进模型与树模型增强模型统一到一个分层代码框架中，并提供三套可直接运行的对比实验脚本。
+并在 test 目录提供了可复现实验脚本（CSV 输出）。
 
 ---
 
@@ -19,9 +21,7 @@ $$
 y = X\beta^* + \varepsilon
 $$
 
-其中 $y \in \mathbb{R}^n$，$X \in \mathbb{R}^{n \times p}$，$\beta^* \in \mathbb{R}^p$。
-
-### 1.2 带测量误差的 EIV 回归
+### 1.2 含测量误差的 EIV 回归
 
 $$
 \begin{cases}
@@ -30,420 +30,493 @@ W = X + U
 \end{cases}
 $$
 
-其中 $W$ 为可观测协变量，$X$ 不可观测，$U$ 为测量误差；通常假设已知或可估计误差协方差矩阵 $\Sigma_{uu}$。
+其中：
+
+- $X$ 是不可观测真实协变量
+- $W$ 是可观测协变量
+- $U$ 是测量误差
+- 常用假设是已知或可估计 $\Sigma_{uu}=\mathrm{Cov}(U)$
+
+测量误差会导致直接基于 $W$ 的估计出现偏差，因此需要纠偏建模。
 
 ---
 
-## 2. 方法演进主线
-
-### 2.1 标准模型主线
-
-```text
-OLS
-	-> Lasso
-	-> Adaptive Lasso
-```
-
-### 2.2 EIV 模型主线
-
-```text
-Naive Lasso
-	-> Corrected OLS / Corrected Ridge（初始化与校正基础）
-	-> Corrected Lasso
-	-> CoCoLasso
-	-> Adaptive Corrected Lasso / Adaptive CoCoLasso
-	-> RandomForest Corrected Lasso / XGBoost Corrected Lasso
-```
-
----
-
-## 3. 当前代码结构（已统一）
+## 2. 当前代码结构（与仓库一致）
 
 ```text
 src/
-	__init__.py
-	evaluation/
-		__init__.py
-		vs_evaluate.py
-	experiments/
-		__init__.py
-		comparison_common.py
-	models/
-		__init__.py
-		base/
-			__init__.py
-			OLS.py
-			Lasso.py
-			Adaptive_Lasso.py
-		eiv/
-			__init__.py
-			canonical/
-				__init__.py
-				Corrected_OLS.py
-				Corrected_Ridge.py
-				Corrected_Lasso.py
-				CoCoLasso.py
-			adaptive/
-				__init__.py
-				Adaptive_Corrected_Lasso.py
-				Adaptive_CoCoLasso.py
-			feature_weighted/
-				__init__.py
-				RandomForest_Corrected_Lasso.py
-				XGBoost_Corrected_Lasso.py
+  __init__.py
+  evaluation/
+    __init__.py
+    vs_evaluate.py
+  experiments/
+    __init__.py
+    comparison_common.py
+  models/
+    __init__.py
+    base/
+      __init__.py
+      OLS.py
+      Lasso.py
+      ALasso.py
+      ElasticNet.py
+    eiv/
+      __init__.py
+      canonical/
+        __init__.py
+        COLS.py
+        CRidge.py
+        CLasso.py
+        CoCoLasso.py
+        CoCoElasticNet.py
+      adaptive/
+        __init__.py
+        ACLasso.py
+        ACoCoLasso.py
 
 test/
-	comparison_baseline.py
-	comparison_with_randomforest.py
-	comparison_with_xgboost.py
+  comparison_baseline.py
+  ACoCoLasso_reproduction.py
+  ShapACoCoLasso_reproduction.py
+  CoCoElasticNet.py
+  RFACoCoLasso.py
+  XGBoostACoCoLasso.py
 ```
 
-说明：历史兼容层 prop 已移除，导入路径统一使用 src.models.* 与 src.evaluation。`results` 目录会随实验持续新增文件，以上为当前核验快照。
+---
+
+## 3. src 框架详解
+
+### 3.1 src/models/base
+
+无测量误差基线模型：
+
+- OLS
+- Lasso
+- ALasso
+- ElasticNet
+
+用途：基线对照、接口验证、无误差场景建模。
+
+### 3.2 src/models/eiv/canonical
+
+EIV 经典修正模型：
+
+- COLS：修正 OLS（常用作自适应模型初始估计）
+- CRidge：修正 Ridge
+- CLasso：修正 Lasso
+- CoCoLasso：凸约束误差修正 Lasso
+- CoCoElasticNet：CoCo 框架下 ElasticNet 版本
+
+### 3.3 src/models/eiv/adaptive
+
+EIV 自适应模型：
+
+- ACLasso
+- ACoCoLasso
+
+这两个类都遵循同一范式：
+
+1. 外部传入 init_coef
+2. 类内部将 init_coef 转换为权重
+3. 用重参数化把加权问题转为标准 Lasso 子问题
+
+### 3.4 src/evaluation
+
+selection_accuracy 是统一评估函数，返回：
+
+- 选择指标：TP、FP、FN、Precision、Recall、F1、FDR、MCC、Hamming 等
+- 估计误差：L1/L2/Linf、MSE
+- 预测误差：PE
+
+### 3.5 src/experiments
+
+comparison_common.py 提供通用实验流水线函数：
+
+- generate_data
+- evaluate_model_once
+- monte_carlo_evaluation
+- run_parameter_test
+- plot_comparison
 
 ---
 
-## 4. 模型清单与文件映射
+## 4. 三个核心方法详解
 
-### 4.1 基础模型（无测量误差）
+本节重点解释：
 
-| 模型 | 类名 | 文件 |
-|---|---|---|
-| OLS | OLS | src/models/base/OLS.py |
-| Lasso | LassoRegression | src/models/base/Lasso.py |
-| Adaptive Lasso | AdaptiveLasso | src/models/base/Adaptive_Lasso.py |
+1. CoCoLasso
+2. ACoCoLasso
+3. ShapACoCoLasso（当前为 test 中的策略实现）
 
-### 4.2 EIV 经典修正模型
+### 4.1 CoCoLasso
 
-| 模型 | 类名 | 文件 |
-|---|---|---|
-| Corrected OLS | CorrectedOLS | src/models/eiv/canonical/Corrected_OLS.py |
-| Corrected Ridge | CorrectedRidge | src/models/eiv/canonical/Corrected_Ridge.py |
-| Corrected Lasso | CorrectedLasso | src/models/eiv/canonical/Corrected_Lasso.py |
-| CoCoLasso | CoCoLasso | src/models/eiv/canonical/CoCoLasso.py |
+实现位置：src/models/eiv/canonical/CoCoLasso.py
 
-### 4.3 EIV 自适应与创新模型
+#### 4.1.1 标准化与误差协方差缩放
 
-| 模型 | 类名 | 文件 |
-|---|---|---|
-| Adaptive Corrected Lasso | AdaptiveCorrectedLasso | src/models/eiv/adaptive/Adaptive_Corrected_Lasso.py |
-| Adaptive CoCoLasso | AdaptiveCoCoLasso | src/models/eiv/adaptive/Adaptive_CoCoLasso.py |
-| RandomForest Corrected Lasso | RandomForestCorrectedLasso | src/models/eiv/feature_weighted/RandomForest_Corrected_Lasso.py |
-| XGBoost Corrected Lasso | XGBoostCorrectedLasso | src/models/eiv/feature_weighted/XGBoost_Corrected_Lasso.py |
-
-评估模块：
-
-- selection_accuracy: src/evaluation/vs_evaluate.py
-
----
-
-## 5. 关键目标函数（统一表述）
-
-### 5.1 OLS
+代码中先对特征标准化、对响应中心化：
 
 $$
-\hat{\beta}_{\text{OLS}} = \arg\min_{\beta}\left(\frac{1}{2n}\|y - X\beta\|_2^2\right)
+\widetilde W=(W-\mu_W)D^{-1},
+\qquad
+\widetilde y=y-\bar y,
 $$
 
-### 5.2 Lasso
+其中 $D=\mathrm{diag}(s_1,\dots,s_p)$。
+
+测量误差协方差同步缩放：
 
 $$
-\hat{\beta}_{\text{Lasso}} = \arg\min_{\beta}\left(\frac{1}{2n}\|y - X\beta\|_2^2 + \lambda\|\beta\|_1\right)
+\widetilde\Sigma_{uu}=D^{-1}\Sigma_{uu}D^{-1}
 $$
 
-### 5.3 Adaptive Lasso
+（代码中等价为逐元素除以 $s_is_j$）。
+
+#### 4.1.2 CoCo 核心统计量
 
 $$
-\hat{\beta}_{\text{Ada}} = \arg\min_{\beta}\left(\frac{1}{2n}\|y - X\beta\|_2^2 + \lambda\sum_{j=1}^p w_j|\beta_j|\right),
-\quad
-w_j = \frac{1}{(|\hat{\beta}^{\text{init}}_j| + \epsilon)^\gamma}
+\widehat\Sigma = \frac{1}{n}\widetilde W^\top\widetilde W - \widetilde\Sigma_{uu},
+\qquad
+\widehat\rho = \frac{1}{n}\widetilde W^\top\widetilde y
 $$
 
-### 5.4 Corrected Lasso（EIV）
+#### 4.1.3 PSD 投影（ADMM）
+
+由于 $\widehat\Sigma$ 可能非半正定，代码通过 ADMM 做投影：
 
 $$
-\hat{\beta}_{\text{Corrected}} = \arg\min_{\beta}\left(
-\frac{1}{2n}\|y - W\beta\|_2^2 - \frac{1}{2}\beta^T\Sigma_{uu}\beta + \lambda\|\beta\|_1
+\widetilde\Sigma = \Pi_{\mathbb S_+}(\widehat\Sigma)
+$$
+
+并记录：
+
+- ADMM 迭代次数
+- 收敛标记
+- 步长历史
+
+随后还会做：
+
+- 对称化
+- 最小特征值抬升
+- Cholesky 失败时微扰重试
+
+#### 4.1.4 转化为标准 Lasso 子问题
+
+原目标可写为：
+
+$$
+\hat\beta_s
+= \arg\min_{\beta}
+\left(
+\frac{1}{2}\beta^\top\widetilde\Sigma\beta
+-\widehat\rho^\top\beta
++\alpha\|\beta\|_1
 \right)
 $$
 
-### 5.5 CoCoLasso（EIV）
-
-先构造
+令 $\widetilde\Sigma=LL^\top$，构造：
 
 $$
-\widehat{\Sigma} = \frac{1}{n}W^TW - \Sigma_{uu},
-\quad
-\widetilde{\rho} = \frac{1}{n}W^Ty
+\widetilde W_{lasso}=\sqrt n\,L^\top,
+\qquad
+\widetilde y_{lasso}=\sqrt n\,L^{-1}\widehat\rho
 $$
 
-再投影到最近半正定矩阵 $\tilde{\Sigma}$，求解
+再调用 sklearn Lasso 求解 $\hat\beta_s$。
+
+#### 4.1.5 反标准化
 
 $$
-\hat{\beta}_{\text{CoCo}} =
-\arg\min_{\beta}
-\left(\frac{1}{2}\beta^T\tilde{\Sigma}\beta - \tilde{\rho}^T\beta + \lambda\|\beta\|_1\right)
+\hat\beta_j=\hat\beta_{s,j}/s_j,
+\qquad
+\hat b=\bar y-\mu_W^\top\hat\beta
 $$
-
-### 5.6 自适应修正类方法
-
-Adaptive Corrected Lasso 与 Adaptive CoCoLasso 都采用“先初始估计，再自适应加权”的范式：
-
-$$
-w_j = \frac{1}{(|\hat{\beta}^{\text{init}}_j| + \epsilon)^\gamma}
-$$
-
-并通过重参数化把加权 L1 惩罚转化为标准 Lasso 子问题求解。
-
-### 5.7 树模型加权修正类方法
-
-RandomForest / XGBoost 版本用特征重要性替代系数初值构造权重：
-
-$$
-w_j = \frac{1}{(FI_j^{\text{norm}} + \epsilon)^\gamma}
-$$
-
-其中 $FI_j^{\text{norm}}$ 为归一化特征重要性。
 
 ---
 
-## 6. 实验框架（以 test 为准）
+### 4.2 ACoCoLasso
 
-### 6.1 三套主实验脚本
+实现位置：src/models/eiv/adaptive/ACoCoLasso.py
 
-| 脚本 | 对比模型集合 |
-|---|---|
-| test/comparison_baseline.py | Naive Lasso, Corrected Lasso, CoCoLasso, Adaptive Corrected Lasso, Adaptive CoCoLasso |
-| test/comparison_with_randomforest.py | Naive Lasso, Corrected Lasso, CoCoLasso, Adaptive Corrected Lasso, RandomForest Corrected Lasso |
-| test/comparison_with_xgboost.py | Naive Lasso, Corrected Lasso, CoCoLasso, Adaptive Corrected Lasso, XGBoost Corrected Lasso |
+ACoCoLasso 是“给定初值的自适应 CoCo 求解器”，不在类内部生成初始估计。
 
-### 6.2 每个脚本的统一流程
+#### 4.2.1 初始估计与权重
 
-1. 生成带测量误差模拟数据（W, y, Sigma_uu）
-2. 进行 Monte Carlo 重复实验（默认 n_simulations = 100，可通过命令行参数调整）
-3. 对四组参数做灵敏度分析：
-   - alpha（正则化强度）
-   - p（特征数）
-   - n（样本量）
-   - sigma_u（测量误差强度）
-4. 输出 6 个核心指标的对比图：Recall, F1, FDR, Exact Selection Rate, Hamming Distance, MCC
-5. 保存 PNG 图与 PKL 汇总结果到 results 目录
+给定外部初值 $\hat\beta^{(0)}$（原尺度），先转标准化尺度：
 
-脚本级参数约定：
+$$
+\hat\beta^{(0)}_{s,j}=\hat\beta^{(0)}_j\cdot s_j
+$$
+
+权重定义：
+
+$$
+\omega_j=\frac{1}{\left(|\hat\beta^{(0)}_{s,j}|+\varepsilon\right)^\gamma}
+$$
+
+代码默认 $\varepsilon=10^{-8}$。
+
+#### 4.2.2 重参数化
+
+设
+
+$$
+D_\omega=\mathrm{diag}(1/\omega_1,\dots,1/\omega_p)
+$$
+
+并令
+
+$$
+\beta_s=D_\omega\alpha
+$$
+
+则目标转为：
+
+$$
+\min_\alpha
+\left(
+\frac12\alpha^\top(D_\omega^\top\widetilde\Sigma D_\omega)\alpha
+-(D_\omega^\top\widehat\rho)^\top\alpha
++\alpha_{reg}\|\alpha\|_1
+\right)
+$$
+
+这对应代码中的：
+
+- Sigma_transformed = D_omega^T Sigma_tilde D_omega
+- rho_transformed = D_omega^T rho_hat
+
+求解 $\alpha$ 后回代 $\beta_s$，再反标准化得到最终系数。
+
+#### 4.2.3 test 中 ACoCoLasso 的初值来源
+
+在复现实验脚本里，ACoCoLasso 的常见初值是 CoCoLasso 一阶段系数（先 CV 选一阶段 alpha）：
+
+$$
+\hat\beta^{(0)} \leftarrow \hat\beta^{CoCo}
+$$
+
+---
+
+### 4.3 ShapACoCoLasso（策略版）
+
+实现位置：test/ShapACoCoLasso_reproduction.py
+
+当前仓库里，ShapACoCoLasso 不是 src 下独立模型类，而是一个方法标签：
+
+- 求解器仍然调用 ACoCoLasso
+- 区别在于 init_coef 的构造引入 SHAP
+
+#### 4.3.1 计算流程
+
+1) 先拟合 CoCoLasso（并 CV 选一阶段 alpha）
+
+$$
+\hat\beta^{coco} \leftarrow \text{CoCoLasso}(\alpha_{init})
+$$
+
+2) 用 shap.LinearExplainer 对该模型计算 SHAP 值 $\phi_{ij}$
+
+3) 计算全局重要性
+
+$$
+I_j=\frac{1}{n}\sum_{i=1}^n |\phi_{ij}|
+$$
+
+4) 映射到 ACoCoLasso 可接受的 init_coef
+
+$$
+\hat\beta^{(0),shap}_j=\frac{I_j}{s_j}
+$$
+
+其中 $s_j=\mathrm{std}(W_j)$。
+
+5) 传入 ACoCoLasso
+
+$$
+\text{ACoCoLasso}(\text{init\_coef}=\hat\beta^{(0),shap})
+$$
+
+#### 4.3.2 该映射的数学意义
+
+由于 ACoCoLasso 内部按 $|\text{init\_coef}_j\cdot s_j|$ 构造权重，代入后得到：
+
+$$
+|\hat\beta^{(0),shap}_j\cdot s_j|=I_j
+$$
+
+因此最终权重为：
+
+$$
+\omega_j=\frac{1}{(I_j+\varepsilon)^\gamma}
+$$
+
+即“直接由 SHAP 重要性控制惩罚强度”。
+
+---
+
+## 5. test 模拟设置（按当前脚本）
+
+### 5.1 脚本列表
 
 - comparison_baseline.py
-	- 包含 Adaptive CoCoLasso
-	- 支持参数：--n_simulations, --selection_threshold
-- comparison_with_randomforest.py
-	- 使用 RandomForestCorrectedLasso
-	- 支持参数：--n_simulations, --selection_threshold, --weight_method
-	- --weight_method 可选值：normalized, max_scaled（默认 max_scaled）
-- comparison_with_xgboost.py
-	- 使用 XGBoostCorrectedLasso
-	- 支持参数：--n_simulations, --selection_threshold, --weight_method
-	- --weight_method 可选值：normalized, max_scaled（默认 max_scaled）
+- ACoCoLasso_reproduction.py
+- ShapACoCoLasso_reproduction.py
+- CoCoElasticNet.py
+- RFACoCoLasso.py
+- XGBoostACoCoLasso.py
 
-结果文件约定：
+### 5.2 五个复现实验脚本的统一设置
 
-- 三个脚本保存的 PKL 均包含 config 字段，用于记录本次运行的关键参数（如 n_simulations、selection_threshold、weight_method）。
+以下设置在 ACoCoLasso_reproduction.py、ShapACoCoLasso_reproduction.py、CoCoElasticNet.py、RFACoCoLasso.py、XGBoostACoCoLasso.py 中一致：
 
-### 6.3 评估指标
+1. 协方差结构
 
-selection_accuracy 支持并返回：
+- AR(0.5): $\Sigma_{x,ij}=0.5^{|i-j|}$
+- Compound Symmetry: $0.3\mathbf{1}\mathbf{1}^\top+0.7I$
 
-- TP, FP, FN, TN
-- Precision, Recall, F1, FDR
-- Exact_Selection_Rate, Specificity, MCC
-- Hamming_Distance, Accuracy
-- L1_Error, L2_Error, Linf_Error（当提供真值与估计系数时）
+2. 数据生成
+
+$$
+X\sim N(0,\Sigma_X),
+\quad
+y=X\beta^*+\epsilon,
+\quad
+W=X+A,
+\quad
+A\sim N(0,\tau^2I)
+$$
+
+并取
+
+$$
+\Sigma_{uu}=\tau^2I
+$$
+
+3. CV 与阈值
+
+- cv_folds = 10
+- alpha_grid = logspace(-2, 0.6, 10)
+- selection_threshold = 1e-6
+
+4. Monte Carlo
+
+- 每个设定重复 n_simulations = 100
+
+5. 两组实验
+
+- high_dim: n=100, p=250, sigma=3.0, taus=[0.75,1.25], 结构=AR+CS
+- ultra_high_dim: n=80, p=1000, sigma=1.0, taus=[0.25,0.5], 结构=AR
+
+6. 真系数（非零项）
+
+- high_dim: [3.0, 1.5, 2.0]
+- ultra_high_dim: [1.0, -0.5, 0.7, -1.2, -0.9, 0.3, 0.55]
+
+7. CSV 指标
+
+- C: TP
+- IC: FP
+- PE: 预测误差
+- MSE: 系数误差
+
+输出均为 mean (std)。
+
+### 5.3 comparison_baseline.py 说明
+
+comparison_baseline.py 使用 src/experiments/comparison_common.py 做参数扫描：
+
+- alpha
+- p
+- n
+- sigma_u
+
+并输出 Recall/F1/FDR/Exact Selection/Hamming/MCC 曲线图和 pkl。
+
+该脚本主要用于通用对比流程演示与参数敏感性分析；自适应模型的严格复现建议优先参考 reproduction 系列脚本。
 
 ---
 
-## 7. 统一导入规范
+## 6. 导入与接口
 
-### 7.1 基础与 EIV 模型导入
+### 6.1 常用导入
 
 ```python
-from src.models.base import OLS, LassoRegression, AdaptiveLasso
-from src.models.eiv.canonical import CorrectedOLS, CorrectedRidge, CorrectedLasso, CoCoLasso
-from src.models.eiv.adaptive import AdaptiveCorrectedLasso, AdaptiveCoCoLasso
-from src.models.eiv.feature_weighted import RandomForestCorrectedLasso, XGBoostCorrectedLasso
+from src.models.base import OLS, Lasso, ALasso, ElasticNet
+from src.models.eiv.canonical import COLS, CRidge, CLasso, CoCoLasso, CoCoElasticNet
+from src.models.eiv.adaptive import ACLasso, ACoCoLasso
 from src.evaluation import selection_accuracy
 ```
 
-### 7.2 顶层聚合导入（可选）
+### 6.2 顶层导入
 
 ```python
-from src import (
-	OLS,
-	LassoRegression,
-	AdaptiveLasso,
-	CorrectedOLS,
-	CorrectedRidge,
-	CorrectedLasso,
-	CoCoLasso,
-	AdaptiveCorrectedLasso,
-	AdaptiveCoCoLasso,
-	RandomForestCorrectedLasso,
-	XGBoostCorrectedLasso,
-	selection_accuracy,
-)
+from src import CoCoLasso, ACoCoLasso, selection_accuracy
 ```
 
-实验公共函数导入：
-
-```python
-from src import (
-	generate_data,
-	evaluate_model_once,
-	monte_carlo_evaluation,
-	run_parameter_test,
-	plot_comparison,
-)
-```
-
----
-
-## 8. 快速开始
-
-### 8.1 安装依赖
-
-```bash
-pip install -r requirements.txt
-```
-
-### 8.2 运行实验
-
-```bash
-python test/comparison_baseline.py
-python test/comparison_with_randomforest.py
-python test/comparison_with_xgboost.py
-```
-
-常见参数示例：
-
-```bash
-python test/comparison_baseline.py --n_simulations 50 --selection_threshold 1e-5
-python test/comparison_with_randomforest.py --n_simulations 50 --selection_threshold 1e-5 --weight_method normalized
-python test/comparison_with_xgboost.py --n_simulations 50 --selection_threshold 1e-5 --weight_method normalized
-```
-
-在当前仓库环境（Windows + venv）也可使用：
-
-```bash
-.\venv\Scripts\python.exe .\test\comparison_baseline.py
-.\venv\Scripts\python.exe .\test\comparison_with_randomforest.py
-.\venv\Scripts\python.exe .\test\comparison_with_xgboost.py
-```
-
-带参数示例（Windows + venv）：
-
-```bash
-.\venv\Scripts\python.exe .\test\comparison_baseline.py --n_simulations 50 --selection_threshold 1e-5
-.\venv\Scripts\python.exe .\test\comparison_with_randomforest.py --n_simulations 50 --selection_threshold 1e-5 --weight_method normalized
-.\venv\Scripts\python.exe .\test\comparison_with_xgboost.py --n_simulations 50 --selection_threshold 1e-5 --weight_method normalized
-```
-
-## 9. 数值稳定性与实现约定
-
-1. 各类 EIV 模型在拟合前执行标准化，拟合后将系数映射回原尺度。
-2. 对涉及 Cholesky 分解的矩阵进行半正定修正，避免数值不可逆。
-3. 对零方差特征执行安全处理，避免除零和不稳定系数。
-4. 所有测试脚本支持固定随机种子，保证结果可复现。
-5. 使用统一 sklearn 风格接口：fit / predict / coef_ / intercept_。
-
----
-
-## 10. 方法对比（基础层）
-
-| 方法 | 稀疏性 | 变量选择 | 神谕性质 | 适用场景 |
-|---|---|---|---|---|
-| OLS | 否 | 否 | - | 低维回归、基准模型 |
-| Lasso | 是 | 是 | 否 | 高维变量选择 |
-| Adaptive Lasso | 是 | 是 | 是 | 高维变量选择（理论最优） |
-
----
-
-## 11. 统一接口
+### 6.3 统一接口
 
 所有模型遵循 sklearn 风格：
 
-```python
-class ModelName:
-		def __init__(self, ...):
-				...
+- fit(X_or_W, y)
+- predict(X_or_W)
+- coef_
+- intercept_
 
-		def fit(self, X_or_W, y):
-				...
-				return self
+---
 
-		def predict(self, X_or_W):
-				return X_or_W @ self.coef_ + self.intercept_
+## 7. 运行方式（Windows + venv）
+
+```bash
+.\venv\Scripts\python.exe .\test\ACoCoLasso_reproduction.py
+.\venv\Scripts\python.exe .\test\ShapACoCoLasso_reproduction.py
+.\venv\Scripts\python.exe .\test\CoCoElasticNet.py
+.\venv\Scripts\python.exe .\test\RFACoCoLasso.py
+.\venv\Scripts\python.exe .\test\XGBoostACoCoLasso.py
 ```
 
-约定输出属性：
+如果在新环境运行（当前仓库无 requirements.txt），可按需安装：
 
-- coef_：系数向量
-- intercept_：截距
-
----
-
-## 12. 数学符号说明
-
-| 符号 | 含义 |
-|---|---|
-| n | 样本数量 |
-| p | 特征数量 |
-| X | 无误差协变量矩阵 |
-| W | 含测量误差协变量矩阵 |
-| y | 响应变量向量 |
-| beta | 系数向量 |
-| lambda | 正则化参数 |
-| gamma | 自适应权重指数 |
-| Sigma_uu | 测量误差协方差矩阵 |
-| FI_j | 第 j 个特征的重要性 |
+```bash
+pip install numpy scipy scikit-learn matplotlib shap xgboost
+```
 
 ---
 
-## 13. 算法关系图
+## 8. 数值稳定性与实现约定
+
+src 中 EIV 模型普遍采用以下策略：
+
+1. 标准化/中心化处理
+2. 协方差维度显式校验
+3. PSD 修正与特征值下界
+4. Cholesky 失败微扰重试
+5. 零方差特征安全处理
+
+这些机制在 CoCoLasso、ACoCoLasso、CoCoElasticNet、COLS、CRidge 等类中均有体现。
+
+---
+
+## 9. 方法关系图
 
 ```text
-Naive Lasso
-	-> Corrected Lasso -> Adaptive Corrected Lasso
-	-> CoCoLasso       -> Adaptive CoCoLasso
+CoCoLasso
+  -> ACoCoLasso (CoCo 初值 -> 自适应权重)
+  -> ShapACoCoLasso (CoCo + SHAP -> init_coef -> ACoCoLasso)
 
-Adaptive Corrected Lasso / Adaptive CoCoLasso
-	-> RandomForest Corrected Lasso（重要性加权）
-	-> XGBoost Corrected Lasso（重要性加权）
+ACoCoLasso
+  -> RFACoCoLasso (随机森林重要性 -> init_coef)
+  -> XGBoostACoCoLasso (XGBoost重要性 -> init_coef)
 ```
 
----
-
-## 14. 自适应权重与重参数化
-
-四种代表性权重来源：
-
-| 方法 | 权重来源 |
-|---|---|
-| Adaptive Corrected Lasso | 修正线性初值系数 |
-| Adaptive CoCoLasso | 修正线性初值系数 |
-| RandomForest Corrected Lasso | 随机森林特征重要性 |
-| XGBoost Corrected Lasso | XGBoost 特征重要性 |
-
-重参数化核心思想：
-
-$$
-\lambda\sum_{j=1}^p w_j|\beta_j|
-\xrightarrow{\beta_j = \alpha_j \cdot w_j}
-\lambda\sum_{j=1}^p |\alpha_j|
-$$
-
-这样可以把加权 L1 惩罚问题转化为标准 Lasso 子问题，再逆变换回原系数。
+可以将 ACoCoLasso 理解为统一求解器，不同方法主要差异在权重来源。
 
 ---
 
-## 15. 参考文献
+## 10. 参考文献
 
-1. Zou, H. (2006). The adaptive lasso and its oracle properties. Journal of the American Statistical Association, 101(476), 1418-1429.
-2. Datta, A., & Zou, H. (2017). CoCoLasso for High-dimensional Error-in-variables Regression. The Annals of Statistics, 45(6), 2400-2426.
-3. Loh, P. L., & Wainwright, M. J. (2012). High-dimensional regression with noisy and missing data: Provable guarantees with non-convexity. The Annals of Statistics, 40(3), 1637-1664.
-4. 李锋, 盖宇杰, 卢一强. (2014). 测量误差模型的自适应 LASSO 变量选择方法研究. 中国科学: 数学, 44(9), 983-1006.
+1. Datta, A., and Zou, H. (2017). CoCoLasso for High-dimensional Error-in-variables Regression.
+2. Zou, H. (2006). The Adaptive Lasso and Its Oracle Properties.
+3. Loh, P. L., and Wainwright, M. J. (2012). High-dimensional Regression with Noisy and Missing Data.
+4. 李锋, 盖宇杰, 卢一强 (2014). 测量误差模型的自适应 LASSO 变量选择方法研究.
