@@ -1,4 +1,4 @@
-from .base import ALasso, ElasticNet, Lasso, OLS
+from .base import ALasso, ElasticNet, Lasso, OLS, Ridge
 from .eiv import (
     ACoCoLasso,
     ACLasso,
@@ -14,6 +14,7 @@ __all__ = [
     'Lasso',
     'ALasso',
     'ElasticNet',
+    'Ridge',
     'COLS',
     'CRidge',
     'CLasso',

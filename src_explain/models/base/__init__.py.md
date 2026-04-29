@@ -8,6 +8,7 @@
 - `from .ElasticNet import ElasticNet`: 导入弹性网络回归。
 - `from .Lasso import Lasso`: 导入标准 Lasso 回归。
 - `from .OLS import OLS`: 导入普通最小二乘回归。
+- `from .Ridge import Ridge`: 导入岭回归。
 - `__all__ = [...]`: 定义基础模型的公开 API 列表。
 
 ## 备注

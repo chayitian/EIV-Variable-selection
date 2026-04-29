@@ -4,7 +4,7 @@
 - 聚合基础模型与 EIV 模型，统一在 `models` 命名空间下导出。
 
 ## 逐行说明
-- `from .base import ALasso, ElasticNet, Lasso, OLS`: 引入基础线性模型。
+- `from .base import ALasso, ElasticNet, Lasso, OLS, Ridge`: 引入基础线性模型。
 - `from .eiv import (...)`: 引入测量误差修正的 EIV 模型。
 - `ACoCoLasso`: 自适应凸约束 Lasso（EIV）。
 - `ACLasso`: 自适应修正 Lasso（EIV）。
