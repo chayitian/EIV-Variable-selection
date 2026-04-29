@@ -12,13 +12,6 @@ from .models import (
     Lasso,
 )
 from .evaluation import selection_accuracy
-from .experiments import (
-    generate_data,
-    evaluate_model_once,
-    monte_carlo_evaluation,
-    run_parameter_test,
-    plot_comparison,
-)
 
 __all__ = [
     'OLS',
@@ -33,9 +26,4 @@ __all__ = [
     'ACLasso',
     'ACoCoLasso',
     'selection_accuracy',
-    'generate_data',
-    'evaluate_model_once',
-    'monte_carlo_evaluation',
-    'run_parameter_test',
-    'plot_comparison',
 ]
