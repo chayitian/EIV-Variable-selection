@@ -10,9 +10,7 @@ from sklearn.model_selection import KFold
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from src.evaluation import selection_accuracy
-from src.models.eiv.adaptive import ACLasso, ACoCoLasso
-from src.models.eiv.canonical import CLasso, CoCoLasso, COLS
+from src import selection_accuracy, ACoCoLasso, CoCoLasso
 
 warnings.filterwarnings('ignore', category=ConvergenceWarning)
 
@@ -33,27 +31,10 @@ def generate_dataset(n, p, beta_true, sigma, tau, sigma_x, rng):
 
     a = rng.normal(loc=0.0, scale=tau, size=(n, p))
     w = x_true + a
-    sigma_uu = (tau ** 2) * np.eye(p)
-    return x_true, w, y, sigma_uu
+    return x_true, w, y
 
 
-def build_model(method_name, alpha, sigma_uu, init_coef=None):
-    if method_name == 'CLasso':
-        return CLasso(alpha=alpha, Sigma_uu=sigma_uu)
-    if method_name == 'ACLasso':
-        if init_coef is None:
-            raise ValueError('ACLasso requires init_coef')
-        return ACLasso(alpha=alpha, Sigma_uu=sigma_uu, init_coef=init_coef)
-    if method_name == 'CoCoLasso':
-        return CoCoLasso(alpha=alpha, Sigma_uu=sigma_uu)
-    if method_name == 'ACoCoLasso':
-        if init_coef is None:
-            raise ValueError('ACoCoLasso requires init_coef')
-        return ACoCoLasso(alpha=alpha, Sigma_uu=sigma_uu, init_coef=init_coef)
-    raise ValueError(f'Unknown method: {method_name}')
-
-
-def select_alpha_with_cv(method_name, w, y, sigma_uu, alpha_grid, cv_folds=10, seed=0, init_coef=None):
+def select_alpha_acocolasso(w, y, tau, alpha_grid, cv_folds=10, seed=0, init_coef=None):
     kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
     mean_losses = []
 
@@ -63,7 +44,16 @@ def select_alpha_with_cv(method_name, w, y, sigma_uu, alpha_grid, cv_folds=10, s
             w_train, w_val = w[train_idx], w[val_idx]
             y_train, y_val = y[train_idx], y[val_idx]
 
-            model = build_model(method_name, alpha, sigma_uu, init_coef=init_coef)
+            model = ACoCoLasso(
+                alpha=alpha,
+                init_coef=init_coef,
+                noise="additive",
+                tau=tau,
+                center_z=True,
+                scale_z=True,
+                center_y=True,
+                scale_y=True,
+            )
             try:
                 model.fit(w_train, y_train)
                 y_pred = model.predict(w_val)
@@ -76,31 +66,6 @@ def select_alpha_with_cv(method_name, w, y, sigma_uu, alpha_grid, cv_folds=10, s
 
     best_idx = int(np.argmin(mean_losses))
     return float(alpha_grid[best_idx]), float(mean_losses[best_idx])
-
-
-def fit_init_model_and_get_coef(method_name, w, y, sigma_uu, alpha_grid, cv_folds, seed):
-    if method_name == 'ACLasso':
-        # 按你的要求：ACLasso 先用 COLS 得到初始系数
-        init_model = COLS(Sigma_uu=sigma_uu)
-        init_model.fit(w, y)
-        return init_model.coef_.copy(), None, None
-
-    if method_name == 'ACoCoLasso':
-        # 按你的要求：ACoCoLasso 先用 CoCoLasso（CV优选alpha）得到初始系数
-        init_alpha, init_cv_loss = select_alpha_with_cv(
-            method_name='CoCoLasso',
-            w=w,
-            y=y,
-            sigma_uu=sigma_uu,
-            alpha_grid=alpha_grid,
-            cv_folds=cv_folds,
-            seed=seed,
-        )
-        init_model = CoCoLasso(alpha=init_alpha, Sigma_uu=sigma_uu)
-        init_model.fit(w, y)
-        return init_model.coef_.copy(), init_alpha, init_cv_loss
-
-    return None, None, None
 
 
 def summarize_metric(values):
@@ -146,10 +111,10 @@ def main():
     cv_folds = 10
     alpha_grid = np.logspace(-2, 0.6, 10)
     selection_threshold = 1e-6
+    coco_steps = 50
+    coco_k = 4
 
     methods = [
-        'CLasso',
-        'ACLasso',
         'CoCoLasso',
         'ACoCoLasso',
     ]
@@ -188,7 +153,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print('=' * 90)
-    print('ACoCoLasso reproduction started')
+    print('ACoCoLasso vs CoCoLasso reproduction started')
     print(f'Output directory: {output_dir}')
     print('=' * 90)
 
@@ -221,7 +186,7 @@ def main():
                 for method_idx, method in enumerate(methods):
                     cv_seed = 1000 + exp_idx * 1_000_000 + struct_idx * 100 + tau_idx * 10 + method_idx
                     rng_cv = np.random.default_rng(cv_seed)
-                    _, w_cv, y_cv, sigma_uu_cv = generate_dataset(
+                    _, w_cv, y_cv = generate_dataset(
                         n=n,
                         p=p,
                         beta_true=beta_true,
@@ -231,52 +196,45 @@ def main():
                         rng=rng_cv,
                     )
 
-                    init_coef_cv = None
-                    init_alpha = None
-                    init_cv_loss = None
-                    if method in ('ACLasso', 'ACoCoLasso'):
-                        init_coef_cv, init_alpha, init_cv_loss = fit_init_model_and_get_coef(
-                            method_name=method,
+                    if method == 'CoCoLasso':
+                        print(f'Running method={method}, tau={tau} (internal CV)')
+                    elif method == 'ACoCoLasso':
+                        init_model_cv = CoCoLasso(
+                            noise="additive",
+                            tau=tau,
+                            block=False,
+                            steps=coco_steps,
+                            k=coco_k,
+                            center_z=True,
+                            scale_z=True,
+                            center_y=True,
+                            scale_y=True,
+                            random_state=cv_seed,
+                        )
+                        init_model_cv.fit(w_cv, y_cv)
+                        init_coef_cv = init_model_cv.coef_.copy()
+                        init_lambda_sd = init_model_cv.lambda_sd_
+
+                        best_alpha, cv_loss = select_alpha_acocolasso(
                             w=w_cv,
                             y=y_cv,
-                            sigma_uu=sigma_uu_cv,
+                            tau=tau,
                             alpha_grid=alpha_grid,
                             cv_folds=cv_folds,
                             seed=cv_seed,
+                            init_coef=init_coef_cv,
                         )
-
-                    best_alpha, cv_loss = select_alpha_with_cv(
-                        method_name=method,
-                        w=w_cv,
-                        y=y_cv,
-                        sigma_uu=sigma_uu_cv,
-                        alpha_grid=alpha_grid,
-                        cv_folds=cv_folds,
-                        seed=cv_seed,
-                        init_coef=init_coef_cv,
-                    )
+                        print(
+                            f'Running method={method}, tau={tau}, '
+                            f'init_lambda_sd={init_lambda_sd:.6f}, '
+                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
+                        )
 
                     tp_vals = []
                     fp_vals = []
                     mse_vals = []
                     pe_vals = []
 
-                    if method == 'ACLasso':
-                        print(
-                            f'Running method={method}, tau={tau}, init_model=COLS, '
-                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
-                        )
-                    elif method == 'ACoCoLasso':
-                        print(
-                            f'Running method={method}, tau={tau}, init_model=CoCoLasso, '
-                            f'init_alpha={init_alpha:.6f}, init_cv_loss={init_cv_loss:.6f}, '
-                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
-                        )
-                    else:
-                        print(
-                            f'Running method={method}, tau={tau}, '
-                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
-                        )
                     for sim in range(n_simulations):
                         sim_seed = (
                             10_000
@@ -288,7 +246,7 @@ def main():
                         )
                         rng = np.random.default_rng(sim_seed)
 
-                        x_true, w, y, sigma_uu = generate_dataset(
+                        x_true, w, y = generate_dataset(
                             n=n,
                             p=p,
                             beta_true=beta_true,
@@ -299,18 +257,48 @@ def main():
                         )
 
                         try:
-                            init_coef_sim = None
-                            if method == 'ACLasso':
-                                init_model = COLS(Sigma_uu=sigma_uu)
-                                init_model.fit(w, y)
-                                init_coef_sim = init_model.coef_.copy()
+                            if method == 'CoCoLasso':
+                                model = CoCoLasso(
+                                    noise="additive",
+                                    tau=tau,
+                                    block=False,
+                                    steps=coco_steps,
+                                    k=coco_k,
+                                    center_z=True,
+                                    scale_z=True,
+                                    center_y=True,
+                                    scale_y=True,
+                                    random_state=sim_seed,
+                                )
+                                model.fit(w, y)
                             elif method == 'ACoCoLasso':
-                                init_model = CoCoLasso(alpha=init_alpha, Sigma_uu=sigma_uu)
+                                init_model = CoCoLasso(
+                                    noise="additive",
+                                    tau=tau,
+                                    block=False,
+                                    steps=coco_steps,
+                                    k=coco_k,
+                                    center_z=True,
+                                    scale_z=True,
+                                    center_y=True,
+                                    scale_y=True,
+                                    random_state=sim_seed,
+                                )
                                 init_model.fit(w, y)
                                 init_coef_sim = init_model.coef_.copy()
 
-                            model = build_model(method, best_alpha, sigma_uu, init_coef=init_coef_sim)
-                            model.fit(w, y)
+                                model = ACoCoLasso(
+                                    alpha=best_alpha,
+                                    init_coef=init_coef_sim,
+                                    noise="additive",
+                                    tau=tau,
+                                    center_z=True,
+                                    scale_z=True,
+                                    center_y=True,
+                                    scale_y=True,
+                                )
+                                model.fit(w, y)
+
                             selected = np.where(np.abs(model.coef_) > selection_threshold)[0].tolist()
 
                             metrics = selection_accuracy(
@@ -334,9 +322,13 @@ def main():
                         'FP': summarize_metric(fp_vals),
                         'MSE': summarize_metric(mse_vals),
                         'PE': summarize_metric(pe_vals),
-                        'Best_Lambda': best_alpha,
-                        'CV_Loss': cv_loss,
                     }
+                    if method == 'CoCoLasso':
+                        summary_store[(tau, method)]['Best_Lambda'] = 'internal_CV'
+                        summary_store[(tau, method)]['CV_Loss'] = 'internal_CV'
+                    else:
+                        summary_store[(tau, method)]['Best_Lambda'] = best_alpha
+                        summary_store[(tau, method)]['CV_Loss'] = cv_loss
 
             headers = ['Tau', 'Measure'] + methods
             rows = build_measure_table_rows(taus, methods, summary_store)

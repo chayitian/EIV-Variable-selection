@@ -11,9 +11,7 @@ from sklearn.model_selection import KFold
 
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
-from src.evaluation import selection_accuracy
-from src.models.eiv.adaptive import ACoCoLasso
-from src.models.eiv.canonical import CoCoLasso
+from src import selection_accuracy, ACoCoLasso, CoCoLasso
 
 warnings.filterwarnings('ignore', category=ConvergenceWarning)
 
@@ -34,47 +32,7 @@ def generate_dataset(n, p, beta_true, sigma, tau, sigma_x, rng):
 
     a = rng.normal(loc=0.0, scale=tau, size=(n, p))
     w = x_true + a
-    sigma_uu = (tau ** 2) * np.eye(p)
-    return x_true, w, y, sigma_uu
-
-
-def build_model(method_name, alpha, sigma_uu, init_coef=None):
-    if method_name == 'CoCoLasso':
-        return CoCoLasso(alpha=alpha, Sigma_uu=sigma_uu)
-    if method_name == 'ACoCoLasso':
-        if init_coef is None:
-            raise ValueError('ACoCoLasso requires init_coef')
-        return ACoCoLasso(alpha=alpha, Sigma_uu=sigma_uu, init_coef=init_coef)
-    if method_name == 'ShapACoCoLasso':
-        if init_coef is None:
-            raise ValueError('ShapACoCoLasso requires init_coef')
-        return ACoCoLasso(alpha=alpha, Sigma_uu=sigma_uu, init_coef=init_coef)
-    raise ValueError(f'Unknown method: {method_name}')
-
-
-def select_alpha_with_cv(method_name, w, y, sigma_uu, alpha_grid, cv_folds=10, seed=0, init_coef=None):
-    kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
-    mean_losses = []
-
-    for alpha in alpha_grid:
-        fold_losses = []
-        for train_idx, val_idx in kf.split(w):
-            w_train, w_val = w[train_idx], w[val_idx]
-            y_train, y_val = y[train_idx], y[val_idx]
-
-            model = build_model(method_name, alpha, sigma_uu, init_coef=init_coef)
-            try:
-                model.fit(w_train, y_train)
-                y_pred = model.predict(w_val)
-                loss = float(np.mean((y_val - y_pred) ** 2))
-            except Exception:
-                loss = np.inf
-            fold_losses.append(loss)
-
-        mean_losses.append(float(np.mean(fold_losses)))
-
-    best_idx = int(np.argmin(mean_losses))
-    return float(alpha_grid[best_idx]), float(mean_losses[best_idx])
+    return x_true, w, y
 
 
 def _to_shap_matrix(shap_result):
@@ -109,7 +67,6 @@ def compute_shap_init_coef_from_cocolasso(init_model, w):
             f'SHAP value width must be {w.shape[1]}, got {shap_values.shape[1]}'
         )
 
-    # 全局 SHAP 重要性映射为 ACoCoLasso 可接收的 init_coef（尺度与 StandardScaler 对齐）
     shap_importance = np.mean(np.abs(shap_values), axis=0)
     if not np.all(np.isfinite(shap_importance)):
         raise ValueError('SHAP importance must contain only finite values')
@@ -122,39 +79,57 @@ def compute_shap_init_coef_from_cocolasso(init_model, w):
     return init_coef
 
 
-def fit_cocolasso_init_model(w, y, sigma_uu, alpha_grid, cv_folds, seed):
-    init_alpha, init_cv_loss = select_alpha_with_cv(
-        method_name='CoCoLasso',
-        w=w,
-        y=y,
-        sigma_uu=sigma_uu,
-        alpha_grid=alpha_grid,
-        cv_folds=cv_folds,
-        seed=seed,
-    )
-    init_model = CoCoLasso(alpha=init_alpha, Sigma_uu=sigma_uu)
-    init_model.fit(w, y)
-    return init_model, init_alpha, init_cv_loss
+def select_alpha_with_cv(method_name, w, y, tau, alpha_grid, cv_folds=10, seed=0, init_coef=None, coco_steps=50, coco_k=4):
+    kf = KFold(n_splits=cv_folds, shuffle=True, random_state=seed)
+    mean_losses = []
 
+    for alpha in alpha_grid:
+        fold_losses = []
+        for train_idx, val_idx in kf.split(w):
+            w_train, w_val = w[train_idx], w[val_idx]
+            y_train, y_val = y[train_idx], y[val_idx]
 
-def fit_init_model_and_get_coef(method_name, w, y, sigma_uu, alpha_grid, cv_folds, seed):
-    if method_name in ('ACoCoLasso', 'ShapACoCoLasso'):
-        init_model, init_alpha, init_cv_loss = fit_cocolasso_init_model(
-            w=w,
-            y=y,
-            sigma_uu=sigma_uu,
-            alpha_grid=alpha_grid,
-            cv_folds=cv_folds,
-            seed=seed,
-        )
+            if method_name == 'CoCoLasso':
+                model = CoCoLasso(
+                    noise="additive",
+                    tau=tau,
+                    block=False,
+                    steps=coco_steps,
+                    k=coco_k,
+                    center_z=True,
+                    scale_z=True,
+                    center_y=True,
+                    scale_y=True,
+                    random_state=seed,
+                )
+            elif method_name in ('ACoCoLasso', 'ShapACoCoLasso'):
+                if init_coef is None:
+                    raise ValueError(f'{method_name} requires init_coef')
+                model = ACoCoLasso(
+                    alpha=alpha,
+                    init_coef=init_coef,
+                    noise="additive",
+                    tau=tau,
+                    center_z=True,
+                    scale_z=True,
+                    center_y=True,
+                    scale_y=True,
+                )
+            else:
+                raise ValueError(f'Unknown method: {method_name}')
 
-        if method_name == 'ACoCoLasso':
-            return init_model.coef_.copy(), init_alpha, init_cv_loss
+            try:
+                model.fit(w_train, y_train)
+                y_pred = model.predict(w_val)
+                loss = float(np.mean((y_val - y_pred) ** 2))
+            except Exception:
+                loss = np.inf
+            fold_losses.append(loss)
 
-        shap_init_coef = compute_shap_init_coef_from_cocolasso(init_model, w)
-        return shap_init_coef, init_alpha, init_cv_loss
+        mean_losses.append(float(np.mean(fold_losses)))
 
-    return None, None, None
+    best_idx = int(np.argmin(mean_losses))
+    return float(alpha_grid[best_idx]), float(mean_losses[best_idx])
 
 
 def summarize_metric(values):
@@ -200,6 +175,8 @@ def main():
     cv_folds = 10
     alpha_grid = np.logspace(-2, 0.6, 10)
     selection_threshold = 1e-6
+    coco_steps = 50
+    coco_k = 4
 
     methods = [
         'CoCoLasso',
@@ -274,7 +251,7 @@ def main():
                 for method_idx, method in enumerate(methods):
                     cv_seed = 1000 + exp_idx * 1_000_000 + struct_idx * 100 + tau_idx * 10 + method_idx
                     rng_cv = np.random.default_rng(cv_seed)
-                    _, w_cv, y_cv, sigma_uu_cv = generate_dataset(
+                    _, w_cv, y_cv = generate_dataset(
                         n=n,
                         p=p,
                         beta_true=beta_true,
@@ -284,53 +261,60 @@ def main():
                         rng=rng_cv,
                     )
 
-                    init_coef_cv = None
-                    init_alpha = None
-                    init_cv_loss = None
-                    if method in ('ACoCoLasso', 'ShapACoCoLasso'):
-                        init_coef_cv, init_alpha, init_cv_loss = fit_init_model_and_get_coef(
+                    if method == 'CoCoLasso':
+                        print(f'Running method={method}, tau={tau} (internal CV)')
+
+                    elif method in ('ACoCoLasso', 'ShapACoCoLasso'):
+                        init_model_cv = CoCoLasso(
+                            noise="additive",
+                            tau=tau,
+                            block=False,
+                            steps=coco_steps,
+                            k=coco_k,
+                            center_z=True,
+                            scale_z=True,
+                            center_y=True,
+                            scale_y=True,
+                            random_state=cv_seed,
+                        )
+                        init_model_cv.fit(w_cv, y_cv)
+                        init_lambda_sd = init_model_cv.lambda_sd_
+
+                        if method == 'ACoCoLasso':
+                            init_coef_cv = init_model_cv.coef_.copy()
+                        else:
+                            init_coef_cv = compute_shap_init_coef_from_cocolasso(init_model_cv, w_cv)
+
+                        best_alpha, cv_loss = select_alpha_with_cv(
                             method_name=method,
                             w=w_cv,
                             y=y_cv,
-                            sigma_uu=sigma_uu_cv,
+                            tau=tau,
                             alpha_grid=alpha_grid,
                             cv_folds=cv_folds,
                             seed=cv_seed,
+                            init_coef=init_coef_cv,
+                            coco_steps=coco_steps,
+                            coco_k=coco_k,
                         )
 
-                    best_alpha, cv_loss = select_alpha_with_cv(
-                        method_name=method,
-                        w=w_cv,
-                        y=y_cv,
-                        sigma_uu=sigma_uu_cv,
-                        alpha_grid=alpha_grid,
-                        cv_folds=cv_folds,
-                        seed=cv_seed,
-                        init_coef=init_coef_cv,
-                    )
+                        if method == 'ACoCoLasso':
+                            print(
+                                f'Running method={method}, tau={tau}, init_model=CoCoLasso, '
+                                f'init_lambda_sd={init_lambda_sd:.6f}, '
+                                f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
+                            )
+                        else:
+                            print(
+                                f'Running method={method}, tau={tau}, init_model=CoCoLasso_SHAP, '
+                                f'init_lambda_sd={init_lambda_sd:.6f}, '
+                                f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
+                            )
 
                     tp_vals = []
                     fp_vals = []
                     mse_vals = []
                     pe_vals = []
-
-                    if method == 'ACoCoLasso':
-                        print(
-                            f'Running method={method}, tau={tau}, init_model=CoCoLasso, '
-                            f'init_alpha={init_alpha:.6f}, init_cv_loss={init_cv_loss:.6f}, '
-                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
-                        )
-                    elif method == 'ShapACoCoLasso':
-                        print(
-                            f'Running method={method}, tau={tau}, init_model=CoCoLasso_SHAP, '
-                            f'init_alpha={init_alpha:.6f}, init_cv_loss={init_cv_loss:.6f}, '
-                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
-                        )
-                    else:
-                        print(
-                            f'Running method={method}, tau={tau}, '
-                            f'best_alpha={best_alpha:.6f}, cv_loss={cv_loss:.6f}'
-                        )
 
                     for sim in range(n_simulations):
                         sim_seed = (
@@ -343,7 +327,7 @@ def main():
                         )
                         rng = np.random.default_rng(sim_seed)
 
-                        x_true, w, y, sigma_uu = generate_dataset(
+                        x_true, w, y = generate_dataset(
                             n=n,
                             p=p,
                             beta_true=beta_true,
@@ -354,17 +338,53 @@ def main():
                         )
 
                         try:
-                            init_coef_sim = None
-                            if method in ('ACoCoLasso', 'ShapACoCoLasso'):
-                                init_model = CoCoLasso(alpha=init_alpha, Sigma_uu=sigma_uu)
+                            if method == 'CoCoLasso':
+                                model = CoCoLasso(
+                                    noise="additive",
+                                    tau=tau,
+                                    block=False,
+                                    steps=coco_steps,
+                                    k=coco_k,
+                                    center_z=True,
+                                    scale_z=True,
+                                    center_y=True,
+                                    scale_y=True,
+                                    random_state=sim_seed,
+                                )
+                                model.fit(w, y)
+
+                            elif method in ('ACoCoLasso', 'ShapACoCoLasso'):
+                                init_model = CoCoLasso(
+                                    noise="additive",
+                                    tau=tau,
+                                    block=False,
+                                    steps=coco_steps,
+                                    k=coco_k,
+                                    center_z=True,
+                                    scale_z=True,
+                                    center_y=True,
+                                    scale_y=True,
+                                    random_state=sim_seed,
+                                )
                                 init_model.fit(w, y)
+
                                 if method == 'ACoCoLasso':
                                     init_coef_sim = init_model.coef_.copy()
                                 else:
                                     init_coef_sim = compute_shap_init_coef_from_cocolasso(init_model, w)
 
-                            model = build_model(method, best_alpha, sigma_uu, init_coef=init_coef_sim)
-                            model.fit(w, y)
+                                model = ACoCoLasso(
+                                    alpha=best_alpha,
+                                    init_coef=init_coef_sim,
+                                    noise="additive",
+                                    tau=tau,
+                                    center_z=True,
+                                    scale_z=True,
+                                    center_y=True,
+                                    scale_y=True,
+                                )
+                                model.fit(w, y)
+
                             selected = np.where(np.abs(model.coef_) > selection_threshold)[0].tolist()
 
                             metrics = selection_accuracy(
@@ -388,9 +408,13 @@ def main():
                         'FP': summarize_metric(fp_vals),
                         'MSE': summarize_metric(mse_vals),
                         'PE': summarize_metric(pe_vals),
-                        'Best_Lambda': best_alpha,
-                        'CV_Loss': cv_loss,
                     }
+                    if method == 'CoCoLasso':
+                        summary_store[(tau, method)]['Best_Lambda'] = 'internal_CV'
+                        summary_store[(tau, method)]['CV_Loss'] = 'internal_CV'
+                    else:
+                        summary_store[(tau, method)]['Best_Lambda'] = best_alpha
+                        summary_store[(tau, method)]['CV_Loss'] = cv_loss
 
             headers = ['Tau', 'Measure'] + methods
             rows = build_measure_table_rows(taus, methods, summary_store)

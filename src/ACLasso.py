@@ -54,13 +54,11 @@ class ACLasso:
         """
         n_samples, n_features = W.shape
 
-        ## 避免在 fit 中改写实例配置，防止复用实例时状态污染
         if self.Sigma_uu is None:
             Sigma_uu = np.zeros((n_features, n_features))
         else:
             Sigma_uu = self.Sigma_uu
 
-        ## 显式校验测量误差协方差维度，避免隐式广播错误
         if Sigma_uu.shape != (n_features, n_features):
             raise ValueError(
                 f"Sigma_uu shape must be ({n_features}, {n_features}), got {Sigma_uu.shape}"
@@ -73,7 +71,7 @@ class ACLasso:
         y_centered = scaler_y.fit_transform(y.reshape(-1, 1)).flatten()
 
         W_std = scaler_W.scale_
-        W_std_safe = np.where(W_std > 1e-12, W_std, 1.0) ## 防止零方差特征导致缩放除零
+        W_std_safe = np.where(W_std > 1e-12, W_std, 1.0)
         Sigma_uu_scaled = Sigma_uu / np.outer(W_std_safe, W_std_safe)
 
         if self.init_coef is None:
@@ -117,7 +115,7 @@ class ACLasso:
 
         beta_scaled = alpha_scaled * inv_weights
         beta_original_scale = beta_scaled / W_std_safe
-        beta_original_scale = np.where(W_std > 1e-12, beta_original_scale, 0.0) ## 零方差特征不可识别，回写为 0 提升稳定性
+        beta_original_scale = np.where(W_std > 1e-12, beta_original_scale, 0.0)
         self.coef_ = beta_original_scale
         self.intercept_ = scaler_y.mean_ - np.dot(scaler_W.mean_, beta_original_scale)
 
