@@ -115,8 +115,8 @@ def main():
     coco_k = 4
 
     methods = [
-        'CoCoLasso',
         'ACoCoLasso',
+        'CoCoLasso',
     ]
     experiments = [
         {
